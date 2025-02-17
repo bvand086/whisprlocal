@@ -15,8 +15,27 @@ struct WhisprlocalApp: App {
     
     var body: some Scene {
         MenuBarExtra("Whisprlocal", systemImage: "waveform") {
-            ContentView()
-                .environmentObject(transcriptionManager)
+            Button("Start Transcription") {
+                // TODO: Implement transcription
+            }
+            
+            Divider()
+            
+            SettingsLink {
+                Text("Preferences...")
+            }
+            .keyboardShortcut(",")
+            
+            Divider()
+            
+            Button("Quit") {
+                NSApplication.shared.terminate(nil)
+            }
+            .keyboardShortcut("q")
+        }
+        
+        Settings {
+            PreferencesView()
         }
     }
 }
