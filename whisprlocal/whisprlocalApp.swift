@@ -6,12 +6,17 @@
 //
 
 import SwiftUI
+import SwiftWhisper
 
 @main
-struct whisprlocalApp: App {
+struct WhisprlocalApp: App {
+    // Add state object for managing transcription
+    @StateObject private var transcriptionManager = TranscriptionManager()
+    
     var body: some Scene {
-        WindowGroup {
+        MenuBarExtra("Whisprlocal", systemImage: "waveform") {
             ContentView()
+                .environmentObject(transcriptionManager)
         }
     }
 }

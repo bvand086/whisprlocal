@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		8B9C230B2D63EEE500CEF6F5 /* SwiftWhisper in Frameworks */ = {isa = PBXBuildFile; productRef = 8B9C230A2D63EEE500CEF6F5 /* SwiftWhisper */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		8B9C22E82D63EB4800CEF6F5 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8B9C230B2D63EEE500CEF6F5 /* SwiftWhisper in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -78,6 +83,7 @@
 				8B9C22D82D63EB4600CEF6F5 /* whisprlocal */,
 				8B9C22EA2D63EB4800CEF6F5 /* whisprlocalTests */,
 				8B9C22F42D63EB4800CEF6F5 /* whisprlocalUITests */,
+				8B9C23092D63EEE500CEF6F5 /* Frameworks */,
 				8B9C22D72D63EB4600CEF6F5 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +96,13 @@
 				8B9C22F12D63EB4800CEF6F5 /* whisprlocalUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		8B9C23092D63EEE500CEF6F5 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -112,6 +125,7 @@
 			);
 			name = whisprlocal;
 			packageProductDependencies = (
+				8B9C230A2D63EEE500CEF6F5 /* SwiftWhisper */,
 			);
 			productName = whisprlocal;
 			productReference = 8B9C22D62D63EB4600CEF6F5 /* whisprlocal.app */;
@@ -195,6 +209,9 @@
 			);
 			mainGroup = 8B9C22CD2D63EB4600CEF6F5;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				8B9C23042D63ECE800CEF6F5 /* XCRemoteSwiftPackageReference "SwiftWhisper" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8B9C22D72D63EB4600CEF6F5 /* Products */;
 			projectDirPath = "";
@@ -549,6 +566,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		8B9C23042D63ECE800CEF6F5 /* XCRemoteSwiftPackageReference "SwiftWhisper" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/exPHAT/SwiftWhisper.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.2.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		8B9C230A2D63EEE500CEF6F5 /* SwiftWhisper */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8B9C23042D63ECE800CEF6F5 /* XCRemoteSwiftPackageReference "SwiftWhisper" */;
+			productName = SwiftWhisper;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 8B9C22CE2D63EB4600CEF6F5 /* Project object */;
 }
