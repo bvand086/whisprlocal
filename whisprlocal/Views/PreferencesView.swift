@@ -17,6 +17,7 @@ struct PreferencesView: View {
 
 struct ModelPreferencesView: View {
     @ObservedObject private var modelManager = ModelManager.shared
+    @State private var showError = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -24,7 +25,13 @@ struct ModelPreferencesView: View {
                 .font(.headline)
             
             if modelManager.isDownloadingModel {
-                ProgressView("Downloading base model...", value: modelManager.downloadProgress)
+                VStack(alignment: .leading, spacing: 8) {
+                    ProgressView("Downloading base model...", value: modelManager.downloadProgress)
+                    Button("Cancel") {
+                        modelManager.cancelDownload()
+                    }
+                    .controlSize(.small)
+                }
             } else if modelManager.currentModel != nil {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
@@ -38,14 +45,38 @@ struct ModelPreferencesView: View {
                     Text("No model loaded")
                 }
                 
-                Button("Download Base Model") {
-                    modelManager.downloadDefaultModel()
+                VStack(alignment: .leading, spacing: 8) {
+                    Button("Download Base Model") {
+                        Task {
+                            do {
+                                try await modelManager.downloadDefaultModel()
+                            } catch {
+                                showError = true
+                            }
+                        }
+                    }
+                    
+                    if modelManager.lastError != nil {
+                        Text("Download failed. Please check your internet connection.")
+                            .foregroundColor(.red)
+                            .font(.caption)
+                    }
                 }
             }
             
             Spacer()
         }
         .padding()
+        .alert("Download Error", isPresented: $showError) {
+            Button("OK", role: .cancel) { }
+            Button("Retry") {
+                Task {
+                    try? await modelManager.downloadDefaultModel()
+                }
+            }
+        } message: {
+            Text("Failed to download the model. Please check your internet connection and try again.")
+        }
     }
 }
 

@@ -1,72 +1,103 @@
 import Foundation
-import SwiftWhisper
 
-class ModelManager: ObservableObject {
-    @Published var currentModel: Whisper?
+class ModelManager: NSObject, ObservableObject {
+    static let shared = ModelManager()
+    
     @Published var isDownloadingModel = false
     @Published var downloadProgress: Double = 0
+    @Published var currentModel: URL? = nil
+    @Published var lastError: Error? = nil
     
-    static let shared = ModelManager()
-    static let defaultModelUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+    private var downloadTask: URLSessionDownloadTask? = nil
     
-    private let modelDirectory: URL
+    private override init() {
+        super.init()
+    } // Ensure singleton pattern
     
-    init() {
-        // Get the Application Support directory
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        modelDirectory = appSupport.appendingPathComponent("WhisprLocal/Models", isDirectory: true)
-        
-        // Create models directory if it doesn't exist
-        try? FileManager.default.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
-        
-        // Load existing model or download default
-        loadExistingModel()
-    }
-    
-    private func loadExistingModel() {
-        let baseModelPath = modelDirectory.appendingPathComponent("ggml-base.bin")
-        
-        if FileManager.default.fileExists(atPath: baseModelPath.path) {
-            do {
-                currentModel = try Whisper(fromFileURL: baseModelPath)
-            } catch {
-                print("Error loading model: \(error)")
-                downloadDefaultModel()
-            }
-        } else {
-            downloadDefaultModel()
-        }
-    }
-    
-    func downloadDefaultModel() {
+    func downloadDefaultModel() async throws {
         guard !isDownloadingModel else { return }
         
-        isDownloadingModel = true
-        let destination = modelDirectory.appendingPathComponent("ggml-base.bin")
+        DispatchQueue.main.async {
+            self.isDownloadingModel = true
+            self.downloadProgress = 0
+            self.lastError = nil
+        }
         
-        let task = URLSession.shared.downloadTask(with: URL(string: Self.defaultModelUrl)!) { [weak self] tempUrl, response, error in
-            DispatchQueue.main.async {
-                self?.isDownloadingModel = false
-                
+        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        
+        guard let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin") else {
+            throw URLError(.badURL)
+        }
+        
+        downloadTask = session.downloadTask(with: url)
+        downloadTask?.resume()
+        
+        // Create a continuation to wait for completion
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            self.completionHandler = { error in
                 if let error = error {
-                    print("Download error: \(error)")
-                    return
-                }
-                
-                guard let tempUrl = tempUrl else { return }
-                
-                do {
-                    if FileManager.default.fileExists(atPath: destination.path) {
-                        try FileManager.default.removeItem(at: destination)
-                    }
-                    try FileManager.default.moveItem(at: tempUrl, to: destination)
-                    self?.loadExistingModel()
-                } catch {
-                    print("Error saving model: \(error)")
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
                 }
             }
         }
-        
-        task.resume()
+    }
+    
+    func cancelDownload() {
+        downloadTask?.cancel()
+        DispatchQueue.main.async {
+            self.isDownloadingModel = false
+            self.downloadProgress = 0
+        }
+    }
+    
+    private var completionHandler: ((Error?) -> Void)?
+}
+
+extension ModelManager: URLSessionDownloadDelegate {
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        // Move the downloaded file to a permanent location
+        do {
+            let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let destinationURL = documentsPath.appendingPathComponent("whisper-model.bin")
+            
+            // Remove existing file if it exists
+            try? FileManager.default.removeItem(at: destinationURL)
+            
+            try FileManager.default.moveItem(at: location, to: destinationURL)
+            
+            DispatchQueue.main.async {
+                self.currentModel = destinationURL
+                self.isDownloadingModel = false
+                self.downloadProgress = 1.0
+                self.completionHandler?(nil)
+            }
+        } catch {
+            DispatchQueue.main.async {
+                self.lastError = error
+                self.isDownloadingModel = false
+                self.downloadProgress = 0
+                self.completionHandler?(error)
+            }
+        }
+    }
+    
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        DispatchQueue.main.async {
+            self.downloadProgress = progress
+        }
+    }
+    
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            DispatchQueue.main.async {
+                self.lastError = error
+                self.isDownloadingModel = false
+                self.downloadProgress = 0
+                self.completionHandler?(error)
+            }
+        }
     }
 } 
