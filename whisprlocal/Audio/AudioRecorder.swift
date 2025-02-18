@@ -13,6 +13,7 @@ class AudioRecorder: NSObject, ObservableObject {
     
     private override init() {
         super.init()
+        // No need for audio session setup on macOS
     }
     
     /// Starts audio capture
@@ -25,6 +26,7 @@ class AudioRecorder: NSObject, ObservableObject {
             isRecording = true
         } catch {
             lastError = error
+            print("Failed to start recording: \(error)")
         }
     }
     
@@ -44,11 +46,16 @@ class AudioRecorder: NSObject, ObservableObject {
         let desiredFormat = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
         let recordingFormat = inputNode.outputFormat(forBus: 0)
         
+        print("Input format: \(recordingFormat.description)")
+        print("Desired format: \(desiredFormat.description)")
+        
         // Create converter if needed
         let converter = AVAudioConverter(from: recordingFormat, to: desiredFormat)
         
         // Install a tap to capture audio buffers
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, time in
+        // Using a larger buffer size (2 seconds of audio) for better speech recognition
+        let bufferSize = AVAudioFrameCount(desiredFormat.sampleRate * 2.0) // 2 seconds of audio
+        inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: recordingFormat) { [weak self] buffer, time in
             guard let self = self else { return }
             
             // If formats match, send buffer directly
@@ -60,7 +67,10 @@ class AudioRecorder: NSObject, ObservableObject {
             }
             
             // Convert to desired format
-            guard let converter = converter else { return }
+            guard let converter = converter else {
+                print("Failed to create audio converter")
+                return
+            }
             
             let convertedBuffer = AVAudioPCMBuffer(pcmFormat: desiredFormat,
                                                   frameCapacity: AVAudioFrameCount(desiredFormat.sampleRate * Double(buffer.frameLength) / recordingFormat.sampleRate))!
@@ -75,6 +85,7 @@ class AudioRecorder: NSObject, ObservableObject {
             
             if let error = error {
                 self.lastError = error
+                print("Audio conversion error: \(error)")
                 return
             }
             

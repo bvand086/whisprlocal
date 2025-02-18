@@ -91,14 +91,19 @@ class TranscriptionManager: ObservableObject {
     func processAudioBuffer(_ buffer: AVAudioPCMBuffer) async {
         guard isModelLoaded, let whisper = whisper else { return }
         
-        guard let channelData = buffer.floatChannelData?[0] else { return }
+        guard let channelData = buffer.floatChannelData?[0] else {
+            currentError = TranscriptionError.invalidAudioData
+            return
+        }
         
         let frameCount = Int(buffer.frameLength)
         var audioData = [Float](repeating: 0, count: frameCount)
         
+        // Copy and normalize audio data to [-1, 1] range
         channelData.withMemoryRebound(to: Float.self, capacity: frameCount) { ptr in
-            audioData.withUnsafeMutableBufferPointer { bufferPtr in
-                bufferPtr.baseAddress?.initialize(from: ptr, count: frameCount)
+            for i in 0..<frameCount {
+                // Ensure audio data is in [-1, 1] range
+                audioData[i] = max(-1.0, min(1.0, ptr[i]))
             }
         }
         
@@ -135,6 +140,7 @@ class TranscriptionManager: ObservableObject {
     enum TranscriptionError: LocalizedError {
         case modelNotFound(type: String)
         case downloadFailed
+        case invalidAudioData
         
         var errorDescription: String? {
             switch self {
@@ -142,6 +148,8 @@ class TranscriptionManager: ObservableObject {
                 return "The \(type) model file could not be found"
             case .downloadFailed:
                 return "Failed to download the model file"
+            case .invalidAudioData:
+                return "Invalid audio data received"
             }
         }
     }
