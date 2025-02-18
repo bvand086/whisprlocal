@@ -10,13 +10,25 @@ import SwiftWhisper
 
 @main
 struct WhisprlocalApp: App {
-    // Add state object for managing transcription
-    @StateObject private var transcriptionManager = TranscriptionManager()
+    // Add state objects for managing transcription and audio recording
+    @StateObject private var transcriptionManager = TranscriptionManager.shared
+    @StateObject private var audioRecorder = AudioRecorder.shared
     
     var body: some Scene {
         MenuBarExtra("Whisprlocal", systemImage: "waveform") {
-            Button("Start Transcription") {
-                // TODO: Implement transcription
+            Button(audioRecorder.isRecording ? "Stop Recording" : "Start Recording") {
+                if audioRecorder.isRecording {
+                    audioRecorder.stopRecording()
+                } else {
+                    audioRecorder.startRecording()
+                }
+            }
+            
+            Divider()
+            
+            Button("Show Transcribed Text") {
+                // For demonstration: show the transcribed text in an alert or some UI
+                showTranscribedText()
             }
             
             Divider()
@@ -36,6 +48,18 @@ struct WhisprlocalApp: App {
         
         Settings {
             PreferencesView()
+                .environmentObject(transcriptionManager)
         }
+    }
+    
+    private func showTranscribedText() {
+        let alert = NSAlert()
+        alert.messageText = "Transcription"
+        alert.informativeText = transcriptionManager.transcribedText.isEmpty
+            ? "No text yet."
+            : transcriptionManager.transcribedText
+        
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }

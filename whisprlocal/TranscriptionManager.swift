@@ -1,11 +1,17 @@
 import Foundation
 import SwiftWhisper
+import AVFoundation
 
 class TranscriptionManager: ObservableObject {
+    static let shared = TranscriptionManager()
+    
     @Published private(set) var isModelLoaded = false
     @Published private(set) var currentError: Error?
     @Published private(set) var isDownloading = false
     @Published private(set) var downloadProgress: Double = 0
+    
+    // Store partial or continuous transcription text
+    @Published var transcribedText: String = ""
     
     private var whisper: Whisper?
     
@@ -17,13 +23,14 @@ class TranscriptionManager: ObservableObject {
         return modelsPath
     }()
     
+    private init() {}
+    
     func loadModel(named modelName: String) async throws {
         let modelURL = modelsFolderURL.appendingPathComponent(modelName)
         guard FileManager.default.fileExists(atPath: modelURL.path) else {
             throw TranscriptionError.modelNotFound
         }
         
-        // The Whisper initialization can throw
         whisper = try Whisper(fromFileURL: modelURL)
         await MainActor.run {
             isModelLoaded = true
@@ -38,7 +45,6 @@ class TranscriptionManager: ObservableObject {
             downloadProgress = 0
         }
         
-        // Using the async/await version of download without progress tracking
         let (downloadURL, response) = try await URLSession.shared.download(from: url)
         
         guard let httpResponse = response as? HTTPURLResponse,
@@ -54,6 +60,41 @@ class TranscriptionManager: ObservableObject {
         }
         
         try await loadModel(named: filename)
+    }
+    
+    /// Process an audio buffer from the AudioRecorder in real-time.
+    /// - Parameters:
+    ///   - buffer: AVAudioPCMBuffer containing the audio samples (expected to be 16kHz mono).
+    @MainActor
+    func processAudioBuffer(_ buffer: AVAudioPCMBuffer) async {
+        guard isModelLoaded, let whisper = whisper else { return }
+        
+        guard let channelData = buffer.floatChannelData?[0] else { return }
+        
+        let frameCount = Int(buffer.frameLength)
+        var audioData = [Float](repeating: 0, count: frameCount)
+        
+        // Copy the audio data into our array
+        channelData.withMemoryRebound(to: Float.self, capacity: frameCount) { ptr in
+            audioData.withUnsafeMutableBufferPointer { bufferPtr in
+                bufferPtr.baseAddress?.initialize(from: ptr, count: frameCount)
+            }
+        }
+        
+        do {
+            // Transcribe the audio data
+            let segments = try await whisper.transcribe(audioFrames: audioData)
+            
+            // Combine all text segments
+            let combinedText = segments.map { $0.text }.joined(separator: " ")
+            
+            // Append to our transcribed text
+            if !combinedText.isEmpty {
+                self.transcribedText.append(contentsOf: " " + combinedText)
+            }
+        } catch {
+            self.currentError = error
+        }
     }
     
     enum TranscriptionError: LocalizedError {
