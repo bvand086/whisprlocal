@@ -50,30 +50,27 @@ class AudioRecorder: NSObject, ObservableObject {
         print("Desired format: \(desiredFormat.description)")
         
         // Create converter if needed
-        let converter = AVAudioConverter(from: recordingFormat, to: desiredFormat)
+        guard let converter = AVAudioConverter(from: recordingFormat, to: desiredFormat) else {
+            print("Failed to create audio converter")
+            return
+        }
         
-        // Install a tap to capture audio buffers
-        // Using a larger buffer size (2 seconds of audio) for better speech recognition
-        let bufferSize = AVAudioFrameCount(desiredFormat.sampleRate * 2.0) // 2 seconds of audio
+        // Using a smaller buffer size (0.2 seconds) for better real-time performance
+        let bufferSize = AVAudioFrameCount(recordingFormat.sampleRate * 0.2)
+        print("Using buffer size: \(bufferSize) frames")
+        
         inputNode.installTap(onBus: 0, bufferSize: bufferSize, format: recordingFormat) { [weak self] buffer, time in
             guard let self = self else { return }
             
-            // If formats match, send buffer directly
-            if recordingFormat == desiredFormat {
-                Task {
-                    await TranscriptionManager.shared.processAudioBuffer(buffer)
-                }
+            // Create output buffer with appropriate size
+            let ratio = desiredFormat.sampleRate / recordingFormat.sampleRate
+            let outputFrames = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
+            
+            guard let convertedBuffer = AVAudioPCMBuffer(pcmFormat: desiredFormat,
+                                                       frameCapacity: outputFrames) else {
+                print("Failed to create converted buffer")
                 return
             }
-            
-            // Convert to desired format
-            guard let converter = converter else {
-                print("Failed to create audio converter")
-                return
-            }
-            
-            let convertedBuffer = AVAudioPCMBuffer(pcmFormat: desiredFormat,
-                                                  frameCapacity: AVAudioFrameCount(desiredFormat.sampleRate * Double(buffer.frameLength) / recordingFormat.sampleRate))!
             
             var error: NSError?
             let inputBlock: AVAudioConverterInputBlock = { inNumPackets, outStatus in
@@ -81,14 +78,21 @@ class AudioRecorder: NSObject, ObservableObject {
                 return buffer
             }
             
-            converter.convert(to: convertedBuffer, error: &error, withInputFrom: inputBlock)
+            let convertStatus = converter.convert(to: convertedBuffer,
+                                                error: &error,
+                                                withInputFrom: inputBlock)
             
             if let error = error {
-                self.lastError = error
                 print("Audio conversion error: \(error)")
                 return
             }
             
+            if convertStatus == .error {
+                print("Conversion failed with status: \(convertStatus)")
+                return
+            }
+            
+            // Process the converted buffer
             Task {
                 await TranscriptionManager.shared.processAudioBuffer(convertedBuffer)
             }

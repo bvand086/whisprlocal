@@ -89,9 +89,13 @@ class TranscriptionManager: ObservableObject {
     ///   - buffer: AVAudioPCMBuffer containing the audio samples (expected to be 16kHz mono).
     @MainActor
     func processAudioBuffer(_ buffer: AVAudioPCMBuffer) async {
-        guard isModelLoaded, let whisper = whisper else { return }
+        guard isModelLoaded, let whisper = whisper else {
+            print("⚠️ Model not loaded or whisper instance is nil")
+            return
+        }
         
         guard let channelData = buffer.floatChannelData?[0] else {
+            print("⚠️ Invalid audio data: no channel data")
             currentError = TranscriptionError.invalidAudioData
             return
         }
@@ -107,25 +111,40 @@ class TranscriptionManager: ObservableObject {
             }
         }
         
+        print("🎤 Processing audio buffer with \(frameCount) frames")
+        
         do {
             let segments = try await whisper.transcribe(audioFrames: audioData)
-            let combinedText = segments.map { $0.text }.joined(separator: " ")
             
-            if !combinedText.isEmpty {
-                // Add to current buffer
-                if !currentBuffer.isEmpty {
-                    currentBuffer.append(" ")
-                }
-                currentBuffer.append(combinedText)
+            // Process all segments
+            for segment in segments {
+                let text = segment.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                print("🗣️ New segment: \(text)")
                 
-                // If we detect end of utterance or buffer is getting long, create new entry
-                if combinedText.hasSuffix(".") || combinedText.hasSuffix("?") || combinedText.hasSuffix("!") || currentBuffer.count > 200 {
-                    addTranscriptionEntry(currentBuffer)
-                    currentBuffer = ""
+                if !text.isEmpty {
+                    // Add to current buffer
+                    if !currentBuffer.isEmpty {
+                        currentBuffer.append(" ")
+                    }
+                    currentBuffer.append(text)
+                    
+                    // If we detect end of utterance or buffer is getting long, create new entry
+                    if text.hasSuffix(".") || text.hasSuffix("?") || text.hasSuffix("!") || currentBuffer.count > 200 {
+                        print("📝 Creating new transcription entry: \(currentBuffer)")
+                        addTranscriptionEntry(currentBuffer)
+                        currentBuffer = ""
+                    }
                 }
             }
         } catch {
-            self.currentError = error
+            print("❌ Transcription error: \(error)")
+            if "\(error)".contains("instanceBusy") {
+                // If instance is busy, wait a short moment and try again
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                await processAudioBuffer(buffer)
+            } else {
+                self.currentError = error
+            }
         }
     }
     

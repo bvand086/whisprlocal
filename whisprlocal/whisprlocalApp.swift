@@ -13,6 +13,7 @@ struct WhisprlocalApp: App {
     // Add state objects for managing transcription and audio recording
     @StateObject private var transcriptionManager = TranscriptionManager.shared
     @StateObject private var audioRecorder = AudioRecorder.shared
+    @State private var isTranscriptionWindowShown = false
     
     var body: some Scene {
         WindowGroup {
@@ -31,6 +32,12 @@ struct WhisprlocalApp: App {
         .defaultSize(width: 0, height: 0)
         .defaultPosition(.topLeading)
         
+        // Add a new window for transcriptions
+        WindowGroup("Transcriptions") {
+            TranscriptionWindowView()
+                .environmentObject(transcriptionManager)
+        }
+        
         MenuBarExtra("Whisprlocal", systemImage: audioRecorder.isRecording ? "waveform.circle.fill" : "waveform") {
             Button(audioRecorder.isRecording ? "Stop Recording" : "Start Recording") {
                 if audioRecorder.isRecording {
@@ -44,16 +51,23 @@ struct WhisprlocalApp: App {
                         alert.runModal()
                         return
                     }
+                    print("Starting recording...")
                     audioRecorder.startRecording()
                 }
             }
             
             Divider()
             
-            Button("Show Transcribed Text") {
-                // For demonstration: show the transcribed text in an alert or some UI
-                showTranscribedText()
+            Button("Show Transcriptions") {
+                print("Show Transcriptions clicked - Window should appear")
+                isTranscriptionWindowShown = true
+                NSApp.activate(ignoringOtherApps: true)
+                
+                // Create a new window if needed
+                let windowCount = NSApplication.shared.windows.count
+                print("Current window count: \(windowCount)")
             }
+            .keyboardShortcut("t")
             
             Divider()
             
@@ -75,15 +89,23 @@ struct WhisprlocalApp: App {
                 .environmentObject(transcriptionManager)
         }
     }
+}
+
+// Helper view for the transcription window
+struct TranscriptionWindowView: View {
+    @EnvironmentObject var transcriptionManager: TranscriptionManager
     
-    private func showTranscribedText() {
-        let alert = NSAlert()
-        alert.messageText = "Transcription"
-        alert.informativeText = transcriptionManager.transcribedText.isEmpty
-            ? "No text yet."
-            : transcriptionManager.transcribedText
-        
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+    var body: some View {
+        ContentView()
+            .frame(width: 350, height: 500)
+            .onAppear {
+                print("TranscriptionWindowView appeared")
+            }
+            #if DEBUG
+            .onAppear {
+                print("Debug: View changes will be logged")
+                Self._printChanges()
+            }
+            #endif
     }
 }
