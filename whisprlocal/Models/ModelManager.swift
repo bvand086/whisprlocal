@@ -8,6 +8,7 @@ class ModelManager: NSObject, ObservableObject {
     @Published var downloadProgress: Double = 0
     @Published var currentModel: URL? = nil
     @Published var lastError: Error? = nil
+    @Published var downloadedModels: [URL] = []
     
     private var downloadTask: URLSessionDownloadTask? = nil
     private var downloadQueue = DispatchQueue(label: "com.whisprlocal.modeldownload")
@@ -28,6 +29,22 @@ class ModelManager: NSObject, ObservableObject {
     private override init() {
         super.init()
         print("ModelManager initialized with models folder: \(modelsFolderURL)")
+        loadDownloadedModels()
+    }
+    
+    private func loadDownloadedModels() {
+        do {
+            let fileURLs = try FileManager.default.contentsOfDirectory(
+                at: modelsFolderURL,
+                includingPropertiesForKeys: nil
+            ).filter { $0.pathExtension == "bin" }
+            
+            Task { @MainActor in
+                self.downloadedModels = fileURLs
+            }
+        } catch {
+            print("Error loading downloaded models: \(error)")
+        }
     }
     
     func downloadModel(from urlString: String, filename: String) async throws {
@@ -66,6 +83,7 @@ class ModelManager: NSObject, ObservableObject {
                     do {
                         try await TranscriptionManager.shared.loadModel(named: filename)
                         print("Successfully loaded model in TranscriptionManager")
+                        loadDownloadedModels() // Refresh the list of downloaded models
                     } catch {
                         print("Error loading model in TranscriptionManager: \(error)")
                         self.lastError = error

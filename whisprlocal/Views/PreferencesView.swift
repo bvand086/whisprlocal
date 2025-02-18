@@ -37,7 +37,7 @@ struct ModelPreferencesView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Transcription Model")
+            Text("Transcription Models")
                 .font(.headline)
             
             if modelManager.isDownloadingModel {
@@ -48,17 +48,38 @@ struct ModelPreferencesView: View {
                     }
                     .controlSize(.small)
                 }
-            } else if modelManager.currentModel != nil {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("Base model loaded")
+            }
+            
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(modelManager.downloadedModels, id: \.lastPathComponent) { modelURL in
+                        HStack {
+                            Circle()
+                                .fill(modelURL == modelManager.currentModel ? Color.green : Color.gray)
+                                .frame(width: 8, height: 8)
+                            
+                            Text(modelURL.lastPathComponent)
+                                .font(.system(.body, design: .monospaced))
+                            
+                            Spacer()
+                            
+                            if modelURL == modelManager.currentModel {
+                                Text("Active")
+                                    .foregroundColor(.green)
+                                    .font(.caption)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
                 }
-            } else {
+            }
+            .frame(maxHeight: 120)
+            
+            if modelManager.downloadedModels.isEmpty {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.yellow)
-                    Text("No model loaded")
+                    Text("No models downloaded")
                 }
                 
                 VStack(alignment: .leading, spacing: 8) {
