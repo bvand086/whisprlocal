@@ -26,7 +26,9 @@ struct PreferencesView: View {
 
 struct ModelPreferencesView: View {
     @StateObject private var modelManager = ModelManager.shared
+    @EnvironmentObject private var transcriptionManager: TranscriptionManager
     @State private var showError = false
+    @State private var loadingModel: URL? = nil
     
     private let defaultModel = DownloadButton.Model(
         name: "Base Model",
@@ -53,22 +55,31 @@ struct ModelPreferencesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     ForEach(modelManager.downloadedModels, id: \.lastPathComponent) { modelURL in
-                        HStack {
-                            Circle()
-                                .fill(modelURL == modelManager.currentModel ? Color.green : Color.gray)
-                                .frame(width: 8, height: 8)
-                            
-                            Text(modelURL.lastPathComponent)
-                                .font(.system(.body, design: .monospaced))
-                            
-                            Spacer()
-                            
-                            if modelURL == modelManager.currentModel {
-                                Text("Active")
-                                    .foregroundColor(.green)
-                                    .font(.caption)
+                        Button {
+                            loadModel(modelURL)
+                        } label: {
+                            HStack {
+                                Circle()
+                                    .fill(modelURL == modelManager.currentModel ? Color.green : Color.gray)
+                                    .frame(width: 8, height: 8)
+                                
+                                Text(modelURL.lastPathComponent)
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.primary)
+                                
+                                Spacer()
+                                
+                                if modelURL == loadingModel {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else if modelURL == modelManager.currentModel {
+                                    Text("Active")
+                                        .foregroundColor(.green)
+                                        .font(.caption)
+                                }
                             }
                         }
+                        .buttonStyle(.plain)
                         .padding(.vertical, 4)
                     }
                 }
@@ -104,6 +115,12 @@ struct ModelPreferencesView: View {
                 }
             }
             
+            if let error = modelManager.lastError {
+                Text(error.localizedDescription)
+                    .foregroundColor(.red)
+                    .font(.caption)
+            }
+            
             Spacer()
         }
         .padding()
@@ -119,6 +136,28 @@ struct ModelPreferencesView: View {
             }
         } message: {
             Text("Failed to download the model. Please check your internet connection and try again.")
+        }
+    }
+    
+    private func loadModel(_ modelURL: URL) {
+        guard modelURL != modelManager.currentModel else { return }
+        
+        loadingModel = modelURL
+        Task {
+            do {
+                try await transcriptionManager.loadModel(named: modelURL.lastPathComponent)
+                await MainActor.run {
+                    modelManager.currentModel = modelURL
+                }
+            } catch {
+                print("Failed to load model: \(error)")
+                await MainActor.run {
+                    modelManager.lastError = error
+                }
+            }
+            await MainActor.run {
+                loadingModel = nil
+            }
         }
     }
 }
