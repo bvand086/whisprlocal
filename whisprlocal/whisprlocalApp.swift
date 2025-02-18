@@ -16,73 +16,76 @@ struct WhisprlocalApp: App {
     @State private var isTranscriptionWindowShown = false
     
     var body: some Scene {
-        WindowGroup {
-            Color.clear
-                .frame(width: 0, height: 0)
-                .task {
-                    // Try to load the model on app launch
-                    do {
-                        try await transcriptionManager.loadModel(named: "ggml-base.en.bin")
-                    } catch {
-                        print("Failed to load model: \(error)")
-                    }
-                }
-        }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 0, height: 0)
-        .defaultPosition(.topLeading)
-        
-        // Add a new window for transcriptions
-        WindowGroup("Transcriptions") {
-            TranscriptionWindowView()
-                .environmentObject(transcriptionManager)
-        }
-        
         MenuBarExtra("Whisprlocal", systemImage: audioRecorder.isRecording ? "waveform.circle.fill" : "waveform") {
-            Button(audioRecorder.isRecording ? "Stop Recording" : "Start Recording") {
-                if audioRecorder.isRecording {
-                    audioRecorder.stopRecording()
+            VStack(spacing: 12) {
+                if transcriptionManager.isModelLoaded {
+                    Text("Model loaded")
+                        .foregroundColor(.green)
                 } else {
-                    if !transcriptionManager.isModelLoaded {
-                        let alert = NSAlert()
-                        alert.messageText = "No Model Loaded"
-                        alert.informativeText = "Please go to Preferences and download a model first."
-                        alert.addButton(withTitle: "OK")
-                        alert.runModal()
-                        return
-                    }
-                    print("Starting recording...")
-                    audioRecorder.startRecording()
+                    Text("Model not loaded")
+                        .foregroundColor(.red)
                 }
-            }
-            
-            Divider()
-            
-            Button("Show Transcriptions") {
-                print("Show Transcriptions clicked - Window should appear")
-                isTranscriptionWindowShown = true
-                NSApp.activate(ignoringOtherApps: true)
                 
-                // Create a new window if needed
-                let windowCount = NSApplication.shared.windows.count
-                print("Current window count: \(windowCount)")
+                Divider()
+                
+                // Show processing status
+                if transcriptionManager.isProcessing {
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(height: 20)
+                        Text("Processing audio...")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                // Recent transcriptions list
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(transcriptionManager.recentTranscriptions) { entry in
+                            TranscriptionEntryView(entry: entry, isHovered: false)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                }
+                .frame(maxHeight: 200)
+                
+                Divider()
+                
+                Button(audioRecorder.isRecording ? "Stop Recording" : "Start Recording") {
+                    if audioRecorder.isRecording {
+                        audioRecorder.stopRecording()
+                    } else {
+                        if !transcriptionManager.isModelLoaded {
+                            let alert = NSAlert()
+                            alert.messageText = "No Model Loaded"
+                            alert.informativeText = "Please go to Preferences and download a model first."
+                            alert.addButton(withTitle: "OK")
+                            alert.runModal()
+                            return
+                        }
+                        print("Starting recording...")
+                        audioRecorder.startRecording()
+                    }
+                }
+                .keyboardShortcut("r")
+                
+                Divider()
+                
+                SettingsLink {
+                    Text("Preferences...")
+                }
+                .keyboardShortcut(",")
+                
+                Button("Quit") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .keyboardShortcut("q")
             }
-            .keyboardShortcut("t")
-            
-            Divider()
-            
-            SettingsLink {
-                Text("Preferences...")
-            }
-            .keyboardShortcut(",")
-            
-            Divider()
-            
-            Button("Quit") {
-                NSApplication.shared.terminate(nil)
-            }
-            .keyboardShortcut("q")
+            .padding()
+            .frame(width: 300)
         }
+        .menuBarExtraStyle(.window)
         
         Settings {
             PreferencesView()
@@ -91,21 +94,5 @@ struct WhisprlocalApp: App {
     }
 }
 
-// Helper view for the transcription window
-struct TranscriptionWindowView: View {
-    @EnvironmentObject var transcriptionManager: TranscriptionManager
-    
-    var body: some View {
-        ContentView()
-            .frame(width: 350, height: 500)
-            .onAppear {
-                print("TranscriptionWindowView appeared")
-            }
-            #if DEBUG
-            .onAppear {
-                print("Debug: View changes will be logged")
-                Self._printChanges()
-            }
-            #endif
-    }
-}
+// TranscriptionEntryView has been moved to a separate file to avoid redeclaration
+

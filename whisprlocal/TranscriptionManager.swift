@@ -52,17 +52,12 @@ class TranscriptionManager: ObservableObject {
             throw TranscriptionError.modelNotFound(type: "GGML")
         }
         
-        // Validate Core ML model
-        let coreMLModelURL = modelsFolderURL.appendingPathComponent("ggml-base.en-encoder.mlmodelc")
-        guard FileManager.default.fileExists(atPath: coreMLModelURL.path) else {
-            throw TranscriptionError.modelNotFound(type: "Core ML")
-        }
-        
-        // Initialize Whisper with both models
+        // Initialize Whisper with the model
         whisper = try Whisper(fromFileURL: ggmlModelURL)
         
         await MainActor.run {
             isModelLoaded = true
+            currentError = nil  // Clear any previous errors
         }
     }
     
@@ -131,7 +126,17 @@ class TranscriptionManager: ObservableObject {
         
         do {
             print("🎤 Processing audio buffer with \(audioBuffer.count) samples")
-            let segments = try await whisper.transcribe(audioFrames: audioBuffer)
+            
+            let segments = try await withCheckedThrowingContinuation { continuation in
+                whisper.transcribe(audioFrames: audioBuffer) { result in
+                    switch result {
+                    case .success(let segments):
+                        continuation.resume(returning: segments)
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
             
             var transcriptionText = ""
             
@@ -140,7 +145,8 @@ class TranscriptionManager: ObservableObject {
                 let text = segment.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
                 print("🗣️ New segment: \(text)")
                 
-                if !text.isEmpty {
+                // Skip [BLANK_AUDIO] segments
+                if !text.isEmpty && text != "[BLANK_AUDIO]" {
                     if !transcriptionText.isEmpty {
                         transcriptionText.append(" ")
                     }
@@ -149,6 +155,7 @@ class TranscriptionManager: ObservableObject {
             }
             
             if !transcriptionText.isEmpty {
+                print("📝 Adding transcription: \(transcriptionText)")
                 addTranscriptionEntry(transcriptionText)
             }
             
