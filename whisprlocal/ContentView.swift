@@ -33,14 +33,19 @@ struct ContentView: View {
             
             Divider()
             
-            // Current transcription buffer
-            if !transcriptionManager.currentBuffer.isEmpty {
-                Text(transcriptionManager.currentBuffer)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(Color(.textBackgroundColor).opacity(0.5))
-                    .cornerRadius(6)
+            // Show processing status
+            if transcriptionManager.isProcessing {
+                HStack {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(height: 20)
+                    Text("Processing audio...")
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(8)
+                .background(Color(.textBackgroundColor).opacity(0.5))
+                .cornerRadius(6)
             }
             
             // Recent transcriptions list

@@ -36,6 +36,11 @@ class AudioRecorder: NSObject, ObservableObject {
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
         isRecording = false
+        
+        // Process accumulated audio when recording stops
+        Task {
+            await TranscriptionManager.shared.processAccumulatedAudio()
+        }
     }
     
     /// Sets up tap on the inputNode and starts the audio engine.
@@ -92,9 +97,9 @@ class AudioRecorder: NSObject, ObservableObject {
                 return
             }
             
-            // Process the converted buffer
-            Task {
-                await TranscriptionManager.shared.processAudioBuffer(convertedBuffer)
+            // Add the converted buffer to the accumulator
+            Task { @MainActor in
+                TranscriptionManager.shared.addAudioToBuffer(convertedBuffer)
             }
         }
         

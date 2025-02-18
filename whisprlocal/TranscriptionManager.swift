@@ -15,18 +15,25 @@ class TranscriptionManager: ObservableObject {
     @Published private(set) var currentError: Error?
     @Published private(set) var isDownloading = false
     @Published private(set) var downloadProgress: Double = 0
+    @Published private(set) var isProcessing = false
     
     // Store recent transcriptions
     @Published private(set) var recentTranscriptions: [TranscriptionEntry] = []
     private let maxTranscriptions = 10
     
-    // Buffer for current transcription
-    @Published private(set) var currentBuffer: String = ""
+    // Buffer for audio data
+    private var audioBuffer: [Float] = []
+    private let maxBufferSize = 16000 * 30 // 30 seconds at 16kHz
     
     // Store partial or continuous transcription text
     @Published var transcribedText: String = ""
     
     private var whisper: Whisper?
+    
+    // Add a serial queue for audio processing
+    private let processingQueue = DispatchQueue(label: "com.whisprlocal.audioProcessing")
+    private let maxRetries = 3
+    private let retryDelay: UInt64 = 500_000_000 // 500ms
     
     // Model management
     private let modelsFolderURL: URL = {
@@ -84,16 +91,10 @@ class TranscriptionManager: ObservableObject {
         try await loadModel(named: filename)
     }
     
-    /// Process an audio buffer from the AudioRecorder in real-time.
-    /// - Parameters:
-    ///   - buffer: AVAudioPCMBuffer containing the audio samples (expected to be 16kHz mono).
+    /// Add audio data to the buffer for later processing
+    /// - Parameter buffer: AVAudioPCMBuffer containing the audio samples (expected to be 16kHz mono)
     @MainActor
-    func processAudioBuffer(_ buffer: AVAudioPCMBuffer) async {
-        guard isModelLoaded, let whisper = whisper else {
-            print("⚠️ Model not loaded or whisper instance is nil")
-            return
-        }
-        
+    func addAudioToBuffer(_ buffer: AVAudioPCMBuffer) {
         guard let channelData = buffer.floatChannelData?[0] else {
             print("⚠️ Invalid audio data: no channel data")
             currentError = TranscriptionError.invalidAudioData
@@ -101,20 +102,38 @@ class TranscriptionManager: ObservableObject {
         }
         
         let frameCount = Int(buffer.frameLength)
-        var audioData = [Float](repeating: 0, count: frameCount)
         
         // Copy and normalize audio data to [-1, 1] range
         channelData.withMemoryRebound(to: Float.self, capacity: frameCount) { ptr in
             for i in 0..<frameCount {
-                // Ensure audio data is in [-1, 1] range
-                audioData[i] = max(-1.0, min(1.0, ptr[i]))
+                let sample = max(-1.0, min(1.0, ptr[i]))
+                audioBuffer.append(sample)
             }
         }
         
-        print("🎤 Processing audio buffer with \(frameCount) frames")
+        // If buffer gets too large, remove oldest data
+        if audioBuffer.count > maxBufferSize {
+            audioBuffer.removeFirst(frameCount)
+        }
+    }
+    
+    /// Process all accumulated audio data
+    @MainActor
+    func processAccumulatedAudio() async {
+        guard !audioBuffer.isEmpty else { return }
+        guard isModelLoaded, let whisper = whisper else {
+            print("⚠️ Model not loaded or whisper instance is nil")
+            return
+        }
+        
+        isProcessing = true
+        defer { isProcessing = false }
         
         do {
-            let segments = try await whisper.transcribe(audioFrames: audioData)
+            print("🎤 Processing audio buffer with \(audioBuffer.count) samples")
+            let segments = try await whisper.transcribe(audioFrames: audioBuffer)
+            
+            var transcriptionText = ""
             
             // Process all segments
             for segment in segments {
@@ -122,30 +141,29 @@ class TranscriptionManager: ObservableObject {
                 print("🗣️ New segment: \(text)")
                 
                 if !text.isEmpty {
-                    // Add to current buffer
-                    if !currentBuffer.isEmpty {
-                        currentBuffer.append(" ")
+                    if !transcriptionText.isEmpty {
+                        transcriptionText.append(" ")
                     }
-                    currentBuffer.append(text)
-                    
-                    // If we detect end of utterance or buffer is getting long, create new entry
-                    if text.hasSuffix(".") || text.hasSuffix("?") || text.hasSuffix("!") || currentBuffer.count > 200 {
-                        print("📝 Creating new transcription entry: \(currentBuffer)")
-                        addTranscriptionEntry(currentBuffer)
-                        currentBuffer = ""
-                    }
+                    transcriptionText.append(text)
                 }
             }
+            
+            if !transcriptionText.isEmpty {
+                addTranscriptionEntry(transcriptionText)
+            }
+            
+            // Clear the buffer after successful processing
+            audioBuffer.removeAll()
+            
         } catch {
             print("❌ Transcription error: \(error)")
-            if "\(error)".contains("instanceBusy") {
-                // If instance is busy, wait a short moment and try again
-                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-                await processAudioBuffer(buffer)
-            } else {
-                self.currentError = error
-            }
+            currentError = error
         }
+    }
+    
+    /// Clear the current audio buffer without processing
+    func clearAudioBuffer() {
+        audioBuffer.removeAll()
     }
     
     private func addTranscriptionEntry(_ text: String) {
@@ -173,3 +191,4 @@ class TranscriptionManager: ObservableObject {
         }
     }
 } 
+
