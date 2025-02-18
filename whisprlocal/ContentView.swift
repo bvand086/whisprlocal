@@ -10,6 +10,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var transcriptionManager: TranscriptionManager
     @State private var isShowingPreferences = false
+    @State private var hoveredTranscriptionId: UUID?
     
     var body: some View {
         VStack(spacing: 12) {
@@ -32,6 +33,32 @@ struct ContentView: View {
             
             Divider()
             
+            // Current transcription buffer
+            if !transcriptionManager.currentBuffer.isEmpty {
+                Text(transcriptionManager.currentBuffer)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color(.textBackgroundColor).opacity(0.5))
+                    .cornerRadius(6)
+            }
+            
+            // Recent transcriptions list
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(transcriptionManager.recentTranscriptions) { entry in
+                        TranscriptionEntryView(entry: entry, isHovered: hoveredTranscriptionId == entry.id)
+                            .onHover { isHovered in
+                                hoveredTranscriptionId = isHovered ? entry.id : nil
+                            }
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+            .frame(height: 200)
+            
+            Divider()
+            
             Button("Preferences...") {
                 isShowingPreferences = true
             }
@@ -41,10 +68,38 @@ struct ContentView: View {
             }
         }
         .padding()
-        .frame(width: 250)
+        .frame(width: 350)
         .sheet(isPresented: $isShowingPreferences) {
             PreferencesWindow()
         }
+    }
+}
+
+struct TranscriptionEntryView: View {
+    let entry: TranscriptionEntry
+    let isHovered: Bool
+    
+    var body: some View {
+        HStack {
+            Text(entry.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            
+            if isHovered {
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(entry.text, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(.plain)
+                .help("Copy to clipboard")
+            }
+        }
+        .padding(8)
+        .background(Color(.textBackgroundColor))
+        .cornerRadius(6)
     }
 }
 

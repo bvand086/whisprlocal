@@ -2,6 +2,12 @@ import Foundation
 import SwiftWhisper
 import AVFoundation
 
+struct TranscriptionEntry: Identifiable {
+    let id = UUID()
+    let text: String
+    let timestamp: Date
+}
+
 class TranscriptionManager: ObservableObject {
     static let shared = TranscriptionManager()
     
@@ -9,6 +15,13 @@ class TranscriptionManager: ObservableObject {
     @Published private(set) var currentError: Error?
     @Published private(set) var isDownloading = false
     @Published private(set) var downloadProgress: Double = 0
+    
+    // Store recent transcriptions
+    @Published private(set) var recentTranscriptions: [TranscriptionEntry] = []
+    private let maxTranscriptions = 10
+    
+    // Buffer for current transcription
+    @Published private(set) var currentBuffer: String = ""
     
     // Store partial or continuous transcription text
     @Published var transcribedText: String = ""
@@ -26,12 +39,21 @@ class TranscriptionManager: ObservableObject {
     private init() {}
     
     func loadModel(named modelName: String) async throws {
-        let modelURL = modelsFolderURL.appendingPathComponent(modelName)
-        guard FileManager.default.fileExists(atPath: modelURL.path) else {
-            throw TranscriptionError.modelNotFound
+        // Validate GGML model
+        let ggmlModelURL = modelsFolderURL.appendingPathComponent(modelName)
+        guard FileManager.default.fileExists(atPath: ggmlModelURL.path) else {
+            throw TranscriptionError.modelNotFound(type: "GGML")
         }
         
-        whisper = try Whisper(fromFileURL: modelURL)
+        // Validate Core ML model
+        let coreMLModelURL = modelsFolderURL.appendingPathComponent("ggml-base.en-encoder.mlmodelc")
+        guard FileManager.default.fileExists(atPath: coreMLModelURL.path) else {
+            throw TranscriptionError.modelNotFound(type: "Core ML")
+        }
+        
+        // Initialize Whisper with both models
+        whisper = try Whisper(fromFileURL: ggmlModelURL)
+        
         await MainActor.run {
             isModelLoaded = true
         }
@@ -74,7 +96,6 @@ class TranscriptionManager: ObservableObject {
         let frameCount = Int(buffer.frameLength)
         var audioData = [Float](repeating: 0, count: frameCount)
         
-        // Copy the audio data into our array
         channelData.withMemoryRebound(to: Float.self, capacity: frameCount) { ptr in
             audioData.withUnsafeMutableBufferPointer { bufferPtr in
                 bufferPtr.baseAddress?.initialize(from: ptr, count: frameCount)
@@ -82,29 +103,43 @@ class TranscriptionManager: ObservableObject {
         }
         
         do {
-            // Transcribe the audio data
             let segments = try await whisper.transcribe(audioFrames: audioData)
-            
-            // Combine all text segments
             let combinedText = segments.map { $0.text }.joined(separator: " ")
             
-            // Append to our transcribed text
             if !combinedText.isEmpty {
-                self.transcribedText.append(contentsOf: " " + combinedText)
+                // Add to current buffer
+                if !currentBuffer.isEmpty {
+                    currentBuffer.append(" ")
+                }
+                currentBuffer.append(combinedText)
+                
+                // If we detect end of utterance or buffer is getting long, create new entry
+                if combinedText.hasSuffix(".") || combinedText.hasSuffix("?") || combinedText.hasSuffix("!") || currentBuffer.count > 200 {
+                    addTranscriptionEntry(currentBuffer)
+                    currentBuffer = ""
+                }
             }
         } catch {
             self.currentError = error
         }
     }
     
+    private func addTranscriptionEntry(_ text: String) {
+        let entry = TranscriptionEntry(text: text.trimmingCharacters(in: .whitespacesAndNewlines), timestamp: Date())
+        recentTranscriptions.insert(entry, at: 0)
+        if recentTranscriptions.count > maxTranscriptions {
+            recentTranscriptions.removeLast()
+        }
+    }
+    
     enum TranscriptionError: LocalizedError {
-        case modelNotFound
+        case modelNotFound(type: String)
         case downloadFailed
         
         var errorDescription: String? {
             switch self {
-            case .modelNotFound:
-                return "The specified model file could not be found"
+            case .modelNotFound(let type):
+                return "The \(type) model file could not be found"
             case .downloadFailed:
                 return "Failed to download the model file"
             }

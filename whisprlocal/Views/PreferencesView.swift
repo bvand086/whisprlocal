@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PreferencesView: View {
     @StateObject private var modelManager = ModelManager.shared
+    @EnvironmentObject private var transcriptionManager: TranscriptionManager
     
     var body: some View {
         TabView {
@@ -12,6 +13,14 @@ struct PreferencesView: View {
         }
         .frame(width: 400, height: 300)
         .padding()
+        .task {
+            // Try to load the model on launch
+            do {
+                try await transcriptionManager.loadModel(named: "ggml-base.en.bin")
+            } catch {
+                print("Failed to load model: \(error)")
+            }
+        }
     }
 }
 

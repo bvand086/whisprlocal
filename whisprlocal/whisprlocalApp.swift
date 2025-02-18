@@ -15,11 +15,35 @@ struct WhisprlocalApp: App {
     @StateObject private var audioRecorder = AudioRecorder.shared
     
     var body: some Scene {
-        MenuBarExtra("Whisprlocal", systemImage: "waveform") {
+        WindowGroup {
+            Color.clear
+                .frame(width: 0, height: 0)
+                .task {
+                    // Try to load the model on app launch
+                    do {
+                        try await transcriptionManager.loadModel(named: "ggml-base.en.bin")
+                    } catch {
+                        print("Failed to load model: \(error)")
+                    }
+                }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 0, height: 0)
+        .defaultPosition(.topLeading)
+        
+        MenuBarExtra("Whisprlocal", systemImage: audioRecorder.isRecording ? "waveform.circle.fill" : "waveform") {
             Button(audioRecorder.isRecording ? "Stop Recording" : "Start Recording") {
                 if audioRecorder.isRecording {
                     audioRecorder.stopRecording()
                 } else {
+                    if !transcriptionManager.isModelLoaded {
+                        let alert = NSAlert()
+                        alert.messageText = "No Model Loaded"
+                        alert.informativeText = "Please go to Preferences and download a model first."
+                        alert.addButton(withTitle: "OK")
+                        alert.runModal()
+                        return
+                    }
                     audioRecorder.startRecording()
                 }
             }
