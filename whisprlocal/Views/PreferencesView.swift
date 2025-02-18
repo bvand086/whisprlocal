@@ -25,8 +25,15 @@ struct PreferencesView: View {
 }
 
 struct ModelPreferencesView: View {
-    @ObservedObject private var modelManager = ModelManager.shared
+    @StateObject private var modelManager = ModelManager.shared
     @State private var showError = false
+    
+    private let defaultModel = DownloadButton.Model(
+        name: "Base Model",
+        info: "(English, optimized)",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
+        filename: "ggml-base.en.bin"
+    )
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -58,7 +65,10 @@ struct ModelPreferencesView: View {
                     Button("Download Base Model") {
                         Task {
                             do {
-                                try await modelManager.downloadDefaultModel()
+                                try await modelManager.downloadModel(
+                                    from: defaultModel.url,
+                                    filename: defaultModel.filename
+                                )
                             } catch {
                                 showError = true
                             }
@@ -80,7 +90,10 @@ struct ModelPreferencesView: View {
             Button("OK", role: .cancel) { }
             Button("Retry") {
                 Task {
-                    try? await modelManager.downloadDefaultModel()
+                    try? await modelManager.downloadModel(
+                        from: defaultModel.url,
+                        filename: defaultModel.filename
+                    )
                 }
             }
         } message: {

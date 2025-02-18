@@ -16,134 +16,198 @@ class ModelManager: NSObject, ObservableObject {
     private let modelsFolderURL: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let modelsPath = appSupport.appendingPathComponent("Whisprlocal/Models", isDirectory: true)
-        try? FileManager.default.createDirectory(at: modelsPath, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: modelsPath, withIntermediateDirectories: true, attributes: nil)
+            print("Created models directory at: \(modelsPath)")
+        } catch {
+            print("Error creating models directory: \(error)")
+        }
         return modelsPath
     }()
     
     private override init() {
         super.init()
-    } // Ensure singleton pattern
-    
-    func downloadDefaultModel() async throws {
-        guard !isDownloadingModel else { return }
-        
-        DispatchQueue.main.async {
-            self.isDownloadingModel = true
-            self.downloadProgress = 0
-            self.lastError = nil
-        }
-        
-        // Download both GGML and Core ML models
-        try await downloadGGMLModel()
-        try await downloadCoreMLModel()
-        
-        DispatchQueue.main.async {
-            self.isDownloadingModel = false
-            self.downloadProgress = 1.0
-            
-            // Load the model in TranscriptionManager
-            Task {
-                do {
-                    try await TranscriptionManager.shared.loadModel(named: "ggml-base.en.bin")
-                } catch {
-                    self.lastError = error
-                }
-            }
-        }
+        print("ModelManager initialized with models folder: \(modelsFolderURL)")
     }
     
-    private func downloadGGMLModel() async throws {
-        let session = URLSession(configuration: .default)
-        
-        guard let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin") else {
-            throw URLError(.badURL)
+    func downloadModel(from urlString: String, filename: String) async throws {
+        guard !isDownloadingModel else {
+            print("Download already in progress")
+            return
         }
         
-        let destinationURL = modelsFolderURL.appendingPathComponent("ggml-base.en.bin")
-        try? FileManager.default.removeItem(at: destinationURL)
+        print("Starting download of model: \(filename) from \(urlString)")
         
-        let (downloadURL, response) = try await session.download(from: url)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw ModelError.downloadFailed
+        await MainActor.run {
+            isDownloadingModel = true
+            downloadProgress = 0
+            lastError = nil
         }
-        
-        try FileManager.default.moveItem(at: downloadURL, to: destinationURL)
-    }
-    
-    private func downloadCoreMLModel() async throws {
-        let session = URLSession(configuration: .default)
-        
-        guard let url = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-encoder.mlmodel") else {
-            throw URLError(.badURL)
-        }
-        
-        let destinationURL = modelsFolderURL.appendingPathComponent("ggml-base.en-encoder.mlmodel")
-        try? FileManager.default.removeItem(at: destinationURL)
-        
-        let (downloadURL, response) = try await session.download(from: url)
-        
-        guard let httpResponse = response as? HTTPURLResponse,
-              httpResponse.statusCode == 200 else {
-            throw ModelError.downloadFailed
-        }
-        
-        try FileManager.default.moveItem(at: downloadURL, to: destinationURL)
-        
-        // Compile the Core ML model
-        let compiledURL = modelsFolderURL.appendingPathComponent("ggml-base.en-encoder.mlmodelc")
-        try? FileManager.default.removeItem(at: compiledURL)
         
         do {
-            try await compileMLModel(at: destinationURL, to: compiledURL)
+            // Download GGML model
+            try await downloadGGMLModel(from: urlString, filename: filename)
+            print("Successfully downloaded GGML model: \(filename)")
+            
+            // Download and compile Core ML model if it's an English model
+            if filename.contains(".en") {
+                print("English model detected, downloading Core ML model...")
+                try await downloadAndCompileCoreMLModel()
+                print("Successfully downloaded and compiled Core ML model")
+            }
+            
+            await MainActor.run {
+                isDownloadingModel = false
+                downloadProgress = 1.0
+                currentModel = self.modelsFolderURL.appendingPathComponent(filename)
+                
+                // Load the model in TranscriptionManager
+                Task {
+                    do {
+                        try await TranscriptionManager.shared.loadModel(named: filename)
+                        print("Successfully loaded model in TranscriptionManager")
+                    } catch {
+                        print("Error loading model in TranscriptionManager: \(error)")
+                        self.lastError = error
+                    }
+                }
+            }
         } catch {
-            throw ModelError.coreMLCompilationFailed
+            print("Error during model download: \(error)")
+            await MainActor.run {
+                self.lastError = error
+                self.isDownloadingModel = false
+                self.downloadProgress = 0
+            }
+            throw error
         }
     }
     
-    private func compileMLModel(at sourceURL: URL, to destinationURL: URL) async throws {
-        print("Starting model compilation...")
-        print("Source URL: \(sourceURL)")
-        print("Destination URL: \(destinationURL)")
-        
-        // Check if source exists
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            print("Error: Source model file not found")
-            throw ModelError.coreMLCompilationFailed
-        }
-        print("Source file exists: true")
-        
-        // Create parent directory if needed
-        let parentDir = destinationURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
-        
-        print("Compiling model...")
-        // The compilation process will create the .mlmodelc bundle
-        let compiledModel = try await MLModel.compileModel(at: sourceURL)
-        
-        print("Compiled model URL: \(compiledModel)")
-        print("Compiled model exists: \(FileManager.default.fileExists(atPath: compiledModel.path))")
-        
-        // Move the compiled model to the final destination if needed
-        if compiledModel.path != destinationURL.path {
-            print("Moving compiled model to final destination...")
-            try? FileManager.default.removeItem(at: destinationURL)
-            try FileManager.default.moveItem(at: compiledModel, to: destinationURL)
+    private func downloadGGMLModel(from urlString: String, filename: String) async throws {
+        guard let url = URL(string: urlString) else {
+            print("Invalid URL: \(urlString)")
+            throw URLError(.badURL)
         }
         
-        // Verify the final model exists
+        let destinationURL = modelsFolderURL.appendingPathComponent(filename)
+        print("Downloading GGML model to: \(destinationURL)")
+        
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+            print("Removed existing model file")
+        }
+        
+        let (downloadURL, response) = try await URLSession.shared.download(from: url)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("Invalid response type")
+            throw ModelError.downloadFailed
+        }
+        
+        print("Download response status code: \(httpResponse.statusCode)")
+        guard httpResponse.statusCode == 200 else {
+            print("Download failed with status code: \(httpResponse.statusCode)")
+            throw ModelError.downloadFailed
+        }
+        
+        do {
+            try FileManager.default.moveItem(at: downloadURL, to: destinationURL)
+            print("Successfully moved downloaded file to destination")
+        } catch {
+            print("Error moving downloaded file: \(error)")
+            throw error
+        }
+    }
+    
+    private func downloadAndCompileCoreMLModel() async throws {
+        let session = URLSession(configuration: .default)
+        
+        // Use the correct URL for the compiled model
+        let urlString = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-encoder.mlmodelc.zip"
+        guard let url = URL(string: urlString) else {
+            print("Invalid Core ML model URL")
+            throw URLError(.badURL)
+        }
+        
+        let destinationURL = modelsFolderURL.appendingPathComponent("ggml-base.en-encoder.mlmodelc")
+        print("Downloading Core ML model to: \(destinationURL)")
+        
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+            print("Removed existing Core ML model")
+        }
+        
+        // Create a temporary directory for the zip file
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let zipURL = tempDir.appendingPathComponent("model.zip")
+        
+        // Download the zip file
+        let (downloadURL, response) = try await session.download(from: url)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("Invalid response type for Core ML model download")
+            throw ModelError.downloadFailed
+        }
+        
+        print("Core ML download response status code: \(httpResponse.statusCode)")
+        print("Core ML download response headers: \(httpResponse.allHeaderFields)")
+        
+        if httpResponse.statusCode == 302 || httpResponse.statusCode == 301,
+           let redirectURL = httpResponse.allHeaderFields["Location"] as? String,
+           let newURL = URL(string: redirectURL) {
+            print("Following redirect to: \(redirectURL)")
+            let (redirectDownloadURL, redirectResponse) = try await session.download(from: newURL)
+            
+            guard let redirectHttpResponse = redirectResponse as? HTTPURLResponse,
+                  redirectHttpResponse.statusCode == 200 else {
+                print("Redirect download failed with status: \(String(describing: (redirectResponse as? HTTPURLResponse)?.statusCode))")
+                throw ModelError.downloadFailed
+            }
+            
+            try FileManager.default.moveItem(at: redirectDownloadURL, to: zipURL)
+        } else if httpResponse.statusCode == 200 {
+            try FileManager.default.moveItem(at: downloadURL, to: zipURL)
+        } else {
+            print("Unexpected status code: \(httpResponse.statusCode)")
+            throw ModelError.downloadFailed
+        }
+        
+        // Unzip the model
+        print("Unzipping Core ML model...")
+        try await unzipCoreMLModel(from: zipURL, to: destinationURL)
+        
+        // Clean up
+        try? FileManager.default.removeItem(at: tempDir)
+        
+        // Verify the model exists
         guard FileManager.default.fileExists(atPath: destinationURL.path) else {
-            print("Error: Final compiled model not found at destination")
-            throw ModelError.coreMLCompilationFailed
+            print("Error: Core ML model not found at destination")
+            throw ModelError.downloadFailed
         }
         
-        print("Model compilation completed successfully")
+        print("Successfully downloaded and extracted Core ML model")
+    }
+    
+    private func unzipCoreMLModel(from zipURL: URL, to destinationURL: URL) async throws {
+        // Run unzip command
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        process.arguments = ["-o", zipURL.path, "-d", destinationURL.deletingLastPathComponent().path]
         
-        // List contents of the compiled model bundle
-        if let items = try? FileManager.default.contentsOfDirectory(at: destinationURL, includingPropertiesForKeys: nil) {
-            print("Compiled model bundle contents:")
-            items.forEach { print("- \($0)") }
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        
+        print("Running unzip command: unzip -o \(zipURL.path) -d \(destinationURL.deletingLastPathComponent().path)")
+        
+        try process.run()
+        process.waitUntilExit()
+        
+        if process.terminationStatus != 0 {
+            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            print("Unzip failed with output: \(output)")
+            throw ModelError.downloadFailed
         }
     }
     
@@ -163,66 +227,33 @@ class ModelManager: NSObject, ObservableObject {
     
     func cancelDownload() {
         downloadTask?.cancel()
+        print("Download cancelled")
         DispatchQueue.main.async {
             self.isDownloadingModel = false
             self.downloadProgress = 0
         }
     }
-    
-    private var completionHandler: ((Error?) -> Void)?
 }
 
 extension ModelManager: URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        // Move the downloaded file to the models directory
-        do {
-            let destinationURL = modelsFolderURL.appendingPathComponent("ggml-base.en.bin")
-            
-            // Remove existing file if it exists
-            try? FileManager.default.removeItem(at: destinationURL)
-            
-            try FileManager.default.moveItem(at: location, to: destinationURL)
-            
-            DispatchQueue.main.async {
-                self.currentModel = destinationURL
-                self.isDownloadingModel = false
-                self.downloadProgress = 1.0
-                self.completionHandler?(nil)
-                
-                // Load the model in TranscriptionManager
-                Task {
-                    do {
-                        try await TranscriptionManager.shared.loadModel(named: "ggml-base.en.bin")
-                    } catch {
-                        self.lastError = error
-                        self.completionHandler?(error)
-                    }
-                }
-            }
-        } catch {
-            DispatchQueue.main.async {
-                self.lastError = error
-                self.isDownloadingModel = false
-                self.downloadProgress = 0
-                self.completionHandler?(error)
-            }
-        }
+        // This delegate method is not used in the async/await implementation
     }
     
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.downloadProgress = progress
         }
     }
     
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
-            DispatchQueue.main.async {
+            print("Download task completed with error: \(error)")
+            Task { @MainActor in
                 self.lastError = error
                 self.isDownloadingModel = false
                 self.downloadProgress = 0
-                self.completionHandler?(error)
             }
         }
     }
