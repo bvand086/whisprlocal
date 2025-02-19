@@ -294,6 +294,9 @@ class TranscriptionManager: ObservableObject {
             recentTranscriptions.removeLast()
         }
         
+        // Add to clipboard history
+        ClipboardManager.shared.addToHistory(text: text, type: .transcription)
+        
         print("📋 Updated transcription history (count: \(recentTranscriptions.count))")
     }
     

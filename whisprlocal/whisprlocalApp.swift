@@ -7,20 +7,26 @@
 
 import SwiftUI
 import SwiftWhisper
+import AVFoundation
 
 @main
 struct WhisprlocalApp: App {
     // Add state objects for managing transcription and audio recording
     @StateObject private var transcriptionManager = TranscriptionManager.shared
     @StateObject private var audioRecorder = AudioRecorder.shared
+    @StateObject private var clipboardManager = ClipboardManager.shared
     @State private var isTranscriptionWindowShown = false
+    @State private var isClipboardHistoryShown = false
     
     var body: some Scene {
         MenuBarExtra("Whisprlocal", systemImage: audioRecorder.isRecording ? "waveform.circle.fill" : "waveform") {
             VStack(spacing: 12) {
                 // Status Section
                 HStack {
-                    if transcriptionManager.isModelLoaded {
+                    if audioRecorder.microphonePermission != .authorized {
+                        Label("Microphone Access Required", systemImage: "mic.slash")
+                            .foregroundColor(.red)
+                    } else if transcriptionManager.isModelLoaded {
                         Label("Model Ready", systemImage: "checkmark.circle.fill")
                             .foregroundColor(.green)
                     } else {
@@ -37,6 +43,21 @@ struct WhisprlocalApp: App {
                     }
                 }
                 .font(.caption)
+                
+                // Show microphone permission request if needed
+                if audioRecorder.microphonePermission == .denied {
+                    VStack(spacing: 4) {
+                        Text("Microphone access is required")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                        Button("Open System Settings") {
+                            NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 4)
+                }
                 
                 Divider()
                 
@@ -80,6 +101,14 @@ struct WhisprlocalApp: App {
                     if audioRecorder.isRecording {
                         audioRecorder.stopRecording()
                     } else {
+                        if audioRecorder.microphonePermission != .authorized {
+                            // Request microphone permission
+                            Task {
+                                await audioRecorder.requestMicrophonePermissionIfNeeded()
+                            }
+                            return
+                        }
+                        
                         if !transcriptionManager.isModelLoaded {
                             let alert = NSAlert()
                             alert.messageText = "No Model Loaded"
@@ -88,6 +117,7 @@ struct WhisprlocalApp: App {
                             alert.runModal()
                             return
                         }
+                        
                         print("Starting recording...")
                         audioRecorder.startRecording()
                     }
@@ -102,6 +132,18 @@ struct WhisprlocalApp: App {
                 .buttonStyle(.bordered)
                 .tint(audioRecorder.isRecording ? .red : .blue)
                 .help(audioRecorder.isRecording ? "Stop recording (⌘R)" : "Start recording (⌘R)")
+                .disabled(audioRecorder.microphonePermission == .denied)
+                
+                // Clipboard History Button
+                Button(action: {
+                    isClipboardHistoryShown.toggle()
+                }) {
+                    Label("Show Clipboard History", systemImage: "clipboard")
+                        .frame(maxWidth: .infinity)
+                }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
+                .buttonStyle(.bordered)
+                .help("Show clipboard history (⇧⌘K)")
                 
                 Divider()
                 
@@ -127,6 +169,15 @@ struct WhisprlocalApp: App {
             .frame(width: 300)
         }
         .menuBarExtraStyle(.window)
+        
+        Window("Clipboard History", id: "clipboard-history") {
+            ClipboardHistoryView()
+                .frame(width: 400, height: 500)
+        }
+        .defaultPosition(.center)
+        .defaultSize(width: 400, height: 500)
+        .keyboardShortcut("k", modifiers: [.command, .shift])
+        .windowStyle(.hiddenTitleBar)
         
         Settings {
             PreferencesView()
