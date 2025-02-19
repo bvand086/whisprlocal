@@ -6,7 +6,13 @@ class ModelManager: NSObject, ObservableObject {
     
     @Published var isDownloadingModel = false
     @Published var downloadProgress: Double = 0
-    @Published var currentModel: URL? = nil
+    @Published var currentModel: URL? = nil {
+        didSet {
+            if let model = currentModel {
+                UserDefaults.standard.set(model.lastPathComponent, forKey: "lastUsedModel")
+            }
+        }
+    }
     @Published var lastError: Error? = nil
     @Published var downloadedModels: [URL] = []
     
@@ -30,6 +36,15 @@ class ModelManager: NSObject, ObservableObject {
         super.init()
         print("ModelManager initialized with models folder: \(modelsFolderURL)")
         loadDownloadedModels()
+    }
+    
+    var lastUsedModelName: String? {
+        UserDefaults.standard.string(forKey: "lastUsedModel")
+    }
+    
+    func getLastUsedModelURL() -> URL? {
+        guard let modelName = lastUsedModelName else { return nil }
+        return modelsFolderURL.appendingPathComponent(modelName)
     }
     
     private func loadDownloadedModels() {

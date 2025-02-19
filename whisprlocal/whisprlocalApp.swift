@@ -15,6 +15,7 @@ struct WhisprlocalApp: App {
     @StateObject private var transcriptionManager = TranscriptionManager.shared
     @StateObject private var audioRecorder = AudioRecorder.shared
     @StateObject private var clipboardManager = ClipboardManager.shared
+    @StateObject private var modelManager = ModelManager.shared
     @State private var isTranscriptionWindowShown = false
     @State private var isClipboardHistoryShown = false
     
@@ -110,11 +111,50 @@ struct WhisprlocalApp: App {
                         }
                         
                         if !transcriptionManager.isModelLoaded {
-                            let alert = NSAlert()
-                            alert.messageText = "No Model Loaded"
-                            alert.informativeText = "Please go to Preferences and download a model first."
-                            alert.addButton(withTitle: "OK")
-                            alert.runModal()
+                            Task {
+                                // Try to load the last used model first
+                                if let modelURL = modelManager.getLastUsedModelURL() {
+                                    do {
+                                        try await transcriptionManager.loadModel(named: modelURL.lastPathComponent)
+                                        print("Successfully loaded last used model: \(modelURL.lastPathComponent)")
+                                        // Start recording after model is loaded
+                                        audioRecorder.startRecording()
+                                        return
+                                    } catch {
+                                        print("Failed to load last used model: \(error)")
+                                    }
+                                }
+                                
+                                // If last used model failed or doesn't exist, try any downloaded model
+                                if let firstModel = modelManager.downloadedModels.first {
+                                    do {
+                                        try await transcriptionManager.loadModel(named: firstModel.lastPathComponent)
+                                        print("Successfully loaded available model: \(firstModel.lastPathComponent)")
+                                        // Start recording after model is loaded
+                                        audioRecorder.startRecording()
+                                        return
+                                    } catch {
+                                        print("Failed to load available model: \(error)")
+                                    }
+                                }
+                                
+                                // If no models are available or loading failed, try to download the default model
+                                do {
+                                    let defaultModelName = "ggml-base.en.bin"
+                                    let defaultModelURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+                                    try await modelManager.downloadModel(from: defaultModelURL, filename: defaultModelName)
+                                    print("Successfully downloaded and loaded default model")
+                                    // Start recording after model is loaded
+                                    audioRecorder.startRecording()
+                                } catch {
+                                    print("Failed to download default model: \(error)")
+                                    let alert = NSAlert()
+                                    alert.messageText = "Failed to Load Model"
+                                    alert.informativeText = "Could not load any available models or download a new one. Please go to Preferences to manually download a model."
+                                    alert.addButton(withTitle: "OK")
+                                    alert.runModal()
+                                }
+                            }
                             return
                         }
                         
@@ -122,17 +162,27 @@ struct WhisprlocalApp: App {
                         audioRecorder.startRecording()
                     }
                 }) {
-                    Label(
-                        audioRecorder.isRecording ? "Stop Recording" : "Start Recording",
-                        systemImage: audioRecorder.isRecording ? "stop.circle.fill" : "record.circle"
-                    )
-                    .frame(maxWidth: .infinity)
+                    if modelManager.isDownloadingModel {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .frame(height: 16)
+                            Text("Loading Model...")
+                        }
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        Label(
+                            audioRecorder.isRecording ? "Stop Recording" : "Start Recording",
+                            systemImage: audioRecorder.isRecording ? "stop.circle.fill" : "record.circle"
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
                 }
                 .keyboardShortcut("r")
                 .buttonStyle(.bordered)
                 .tint(audioRecorder.isRecording ? .red : .blue)
                 .help(audioRecorder.isRecording ? "Stop recording (⌘R)" : "Start recording (⌘R)")
-                .disabled(audioRecorder.microphonePermission == .denied)
+                .disabled(audioRecorder.microphonePermission == .denied || modelManager.isDownloadingModel)
                 
                 // Clipboard History Button
                 Button(action: {
@@ -167,6 +217,19 @@ struct WhisprlocalApp: App {
             }
             .padding()
             .frame(width: 300)
+            .task {
+                // Load the last used model on app launch
+                if let modelURL = ModelManager.shared.getLastUsedModelURL() {
+                    do {
+                        try await transcriptionManager.loadModel(named: modelURL.lastPathComponent)
+                        print("Successfully loaded last used model: \(modelURL.lastPathComponent)")
+                    } catch {
+                        print("Failed to load last used model: \(error)")
+                    }
+                } else {
+                    print("No last used model found")
+                }
+            }
         }
         .menuBarExtraStyle(.window)
         
