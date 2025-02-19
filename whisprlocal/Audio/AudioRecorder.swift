@@ -97,6 +97,31 @@ class AudioRecorder: NSObject, ObservableObject {
                 return
             }
             
+            // Debug logging for audio conversion
+            if let channelData = convertedBuffer.floatChannelData?[0] {
+                let sampleCount = min(10, Int(convertedBuffer.frameLength))
+                print("🔊 Audio Debug:")
+                print("  Sample Rate: \(desiredFormat.sampleRate) Hz")
+                print("  Frame Length: \(convertedBuffer.frameLength)")
+                print("  First \(sampleCount) samples:")
+                for i in 0..<sampleCount {
+                    print("    Sample[\(i)]: \(channelData[i])")
+                }
+                
+                // Calculate basic statistics
+                var sum: Float = 0
+                var max: Float = -1
+                var min: Float = 1
+                for i in 0..<Int(convertedBuffer.frameLength) {
+                    let sample = channelData[i]
+                    sum += abs(sample)
+                    max = Swift.max(max, sample)
+                    min = Swift.min(min, sample)
+                }
+                let avg = sum / Float(convertedBuffer.frameLength)
+                print("  Statistics - Min: \(min), Max: \(max), Avg magnitude: \(avg)")
+            }
+            
             // Add the converted buffer to the accumulator
             Task { @MainActor in
                 TranscriptionManager.shared.addAudioToBuffer(convertedBuffer)

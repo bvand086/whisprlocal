@@ -98,19 +98,24 @@ class TranscriptionManager: ObservableObject {
     
     func loadModel(named modelName: String) async throws {
         let ggmlModelURL = modelsFolderURL.appendingPathComponent(modelName)
+        print("🔍 Loading model from: \(ggmlModelURL.path)")
+        
         guard FileManager.default.fileExists(atPath: ggmlModelURL.path) else {
+            print("❌ Model file not found at: \(ggmlModelURL.path)")
             throw TranscriptionError.modelNotFound(type: "GGML")
         }
         
         // Save the model name for future reloads (e.g. when changing language)
         currentModelName = modelName
         
+        print("🚀 Initializing Whisper with model: \(modelName)")
         // Initialize Whisper with only the file URL
         whisper = Whisper(fromFileURL: ggmlModelURL)
         
         await MainActor.run {
             isModelLoaded = true
             currentError = nil  // Clear any previous errors
+            print("✅ Model loaded successfully")
         }
     }
     
@@ -168,7 +173,10 @@ class TranscriptionManager: ObservableObject {
     /// Process all accumulated audio data
     @MainActor
     func processAccumulatedAudio() async {
-        guard !audioBuffer.isEmpty else { return }
+        guard !audioBuffer.isEmpty else {
+            print("⚠️ Audio buffer is empty")
+            return
+        }
         guard isModelLoaded, let whisper = whisper else {
             print("⚠️ Model not loaded or whisper instance is nil")
             return
@@ -182,27 +190,45 @@ class TranscriptionManager: ObservableObject {
         }
 
         do {
-            print("🎤 Processing audio buffer with \(audioBuffer.count) samples")
+            print("🎤 Processing audio buffer:")
+            print("  Buffer size: \(audioBuffer.count) samples")
+            
+            // Calculate audio statistics before normalization
+            let stats = calculateAudioStats(audioBuffer)
+            print("  Pre-normalization stats:")
+            print("    Min: \(stats.min), Max: \(stats.max)")
+            print("    Average magnitude: \(stats.avgMagnitude)")
+            print("    RMS: \(stats.rms)")
 
             // Normalize the audio buffer to [-1, 1] range
             let normalizedBuffer = audioBuffer.map { sample in
                 return max(-1.0, min(1.0, sample))
             }
+            
+            // Calculate normalized stats
+            let normalizedStats = calculateAudioStats(normalizedBuffer)
+            print("  Post-normalization stats:")
+            print("    Min: \(normalizedStats.min), Max: \(normalizedStats.max)")
+            print("    Average magnitude: \(normalizedStats.avgMagnitude)")
+            print("    RMS: \(normalizedStats.rms)")
 
+            print("🔄 Starting transcription...")
             // Process the entire audio buffer at once for better context
             let segments: [Segment] = try await whisper.transcribe(audioFrames: normalizedBuffer)
+            
+            print("✅ Transcription complete - Received \(segments.count) segments")
             
             var transcriptionText = ""
             var hasValidContent = false
 
             // Process the transcription segments
-            for segment in segments {
+            for (index, segment) in segments.enumerated() {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("🗣️ Segment received: \(text)")
+                print("  🗣️ Segment[\(index)]: '\(text)'")
                 
                 // Skip empty or noise segments
                 guard !text.isEmpty && text != "[BLANK_AUDIO]" else {
-                    print("⏭️ Skipping empty or blank segment")
+                    print("  ⏭️ Skipping empty or blank segment")
                     continue
                 }
 
@@ -215,11 +241,11 @@ class TranscriptionManager: ObservableObject {
 
             // Only add to history if we have valid content
             if hasValidContent {
-                print("📝 Adding transcription: \(transcriptionText)")
+                print("📝 Final transcription: '\(transcriptionText)'")
                 addTranscriptionEntry(transcriptionText)
                 transcribedText = transcriptionText
             } else {
-                print("ℹ️ No valid speech content detected")
+                print("ℹ️ No valid speech content detected in any segments")
                 transcribedText = ""
             }
 
@@ -228,6 +254,28 @@ class TranscriptionManager: ObservableObject {
             currentError = error
             transcribedText = ""
         }
+    }
+    
+    /// Calculate audio statistics for debugging
+    private func calculateAudioStats(_ buffer: [Float]) -> (min: Float, max: Float, avgMagnitude: Float, rms: Float) {
+        guard !buffer.isEmpty else { return (0, 0, 0, 0) }
+        
+        var min: Float = buffer[0]
+        var max: Float = buffer[0]
+        var sum: Float = 0
+        var sumSquares: Float = 0
+        
+        for sample in buffer {
+            min = Swift.min(min, sample)
+            max = Swift.max(max, sample)
+            sum += abs(sample)
+            sumSquares += sample * sample
+        }
+        
+        let avgMagnitude = sum / Float(buffer.count)
+        let rms = sqrt(sumSquares / Float(buffer.count))
+        
+        return (min, max, avgMagnitude, rms)
     }
     
     /// Clear the current audio buffer without processing
