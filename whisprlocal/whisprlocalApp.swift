@@ -18,6 +18,7 @@ struct WhisprlocalApp: App {
     @StateObject private var modelManager = ModelManager.shared
     @State private var isTranscriptionWindowShown = false
     @State private var isClipboardHistoryShown = false
+    @State private var clipboardWindowController: NSWindowController?
     
     var body: some Scene {
         MenuBarExtra("Whisprlocal", systemImage: audioRecorder.isRecording ? "waveform.circle.fill" : "waveform") {
@@ -186,7 +187,23 @@ struct WhisprlocalApp: App {
                 
                 // Clipboard History Button
                 Button(action: {
-                    isClipboardHistoryShown.toggle()
+                    if let controller = clipboardWindowController {
+                        controller.window?.makeKeyAndOrderFront(nil)
+                        NSApplication.shared.activate(ignoringOtherApps: true)
+                    } else {
+                        let controller = NSWindowController(window: NSWindow(
+                            contentRect: NSRect(x: 0, y: 0, width: 400, height: 500),
+                            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                            backing: .buffered,
+                            defer: false
+                        ))
+                        controller.window?.title = "Clipboard History"
+                        controller.window?.contentView = NSHostingView(rootView: ClipboardHistoryView())
+                        controller.window?.center()
+                        controller.showWindow(nil)
+                        NSApplication.shared.activate(ignoringOtherApps: true)
+                        clipboardWindowController = controller
+                    }
                 }) {
                     Label("Show Clipboard History", systemImage: "clipboard")
                         .frame(maxWidth: .infinity)
@@ -233,13 +250,12 @@ struct WhisprlocalApp: App {
         }
         .menuBarExtraStyle(.window)
         
-        Window("Clipboard History", id: "clipboard-history") {
+        WindowGroup("Clipboard History") {
             ClipboardHistoryView()
                 .frame(width: 400, height: 500)
         }
-        .defaultPosition(.center)
+        .windowResizability(.contentSize)
         .defaultSize(width: 400, height: 500)
-        .keyboardShortcut("k", modifiers: [.command, .shift])
         .windowStyle(.hiddenTitleBar)
         
         Settings {

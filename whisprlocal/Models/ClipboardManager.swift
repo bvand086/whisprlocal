@@ -7,29 +7,54 @@ class ClipboardManager: ObservableObject {
     @Published private(set) var clipboardHistory: [ClipboardEntry] = []
     private let maxHistoryItems = 50
     private let pasteboard = NSPasteboard.general
+    private let userDefaultsKey = "clipboardHistory"
     
     private init() {
+        loadHistory()
         // Initialize with current clipboard content if it exists
         if let currentText = pasteboard.string(forType: .string) {
             addToHistory(text: currentText, type: .text)
         }
     }
     
-    struct ClipboardEntry: Identifiable, Equatable {
-        let id = UUID()
+    struct ClipboardEntry: Identifiable, Equatable, Codable {
+        let id: UUID
         let content: String
         let timestamp: Date
         let type: ClipboardType
-        var isFavorite: Bool = false
+        var isFavorite: Bool
+        
+        init(content: String, timestamp: Date, type: ClipboardType, isFavorite: Bool = false) {
+            self.id = UUID()
+            self.content = content
+            self.timestamp = timestamp
+            self.type = type
+            self.isFavorite = isFavorite
+        }
         
         static func == (lhs: ClipboardEntry, rhs: ClipboardEntry) -> Bool {
             lhs.id == rhs.id
         }
     }
     
-    enum ClipboardType {
+    enum ClipboardType: String, Codable {
         case text
         case transcription
+    }
+    
+    private func saveHistory() {
+        if let encoded = try? JSONEncoder().encode(clipboardHistory) {
+            UserDefaults.standard.set(encoded, forKey: userDefaultsKey)
+        }
+    }
+    
+    private func loadHistory() {
+        if let data = UserDefaults.standard.data(forKey: userDefaultsKey),
+           let decodedHistory = try? JSONDecoder().decode([ClipboardEntry].self, from: data) {
+            DispatchQueue.main.async {
+                self.clipboardHistory = decodedHistory
+            }
+        }
     }
     
     func addToHistory(text: String, type: ClipboardType) {
@@ -50,6 +75,8 @@ class ClipboardManager: ObservableObject {
             if self.clipboardHistory.count > self.maxHistoryItems {
                 self.clipboardHistory.removeLast()
             }
+            
+            self.saveHistory()
         }
     }
     
@@ -62,6 +89,7 @@ class ClipboardManager: ObservableObject {
             DispatchQueue.main.async {
                 let entry = self.clipboardHistory.remove(at: index)
                 self.clipboardHistory.insert(entry, at: 0)
+                self.saveHistory()
             }
         }
     }
@@ -72,6 +100,7 @@ class ClipboardManager: ObservableObject {
                 var updatedEntry = entry
                 updatedEntry.isFavorite.toggle()
                 self.clipboardHistory[index] = updatedEntry
+                self.saveHistory()
             }
         }
     }
@@ -79,6 +108,7 @@ class ClipboardManager: ObservableObject {
     func clearHistory() {
         DispatchQueue.main.async {
             self.clipboardHistory.removeAll()
+            self.saveHistory()
         }
     }
     
@@ -86,6 +116,7 @@ class ClipboardManager: ObservableObject {
         if let index = clipboardHistory.firstIndex(of: entry) {
             DispatchQueue.main.async {
                 self.clipboardHistory.remove(at: index)
+                self.saveHistory()
             }
         }
     }
