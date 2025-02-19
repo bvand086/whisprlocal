@@ -84,22 +84,47 @@ struct TranscriptionEntryView: View {
     let entry: TranscriptionEntry
     let isHovered: Bool
     
+    private var formattedTimestamp: String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: entry.timestamp)
+    }
+    
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
+            Text(formattedTimestamp)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 50, alignment: .leading)
+            
             Text(entry.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
+                .lineLimit(3)
+                .truncationMode(.tail)
             
             if isHovered {
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(entry.text, forType: .string)
+                Menu {
+                    Button(action: {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(entry.text, forType: .string)
+                    }) {
+                        Label("Copy Text", systemImage: "doc.on.doc")
+                    }
+                    
+                    Button(action: {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString("\(formattedTimestamp): \(entry.text)", forType: .string)
+                    }) {
+                        Label("Copy with Timestamp", systemImage: "clock.fill")
+                    }
                 } label: {
-                    Image(systemName: "doc.on.doc")
+                    Image(systemName: "ellipsis.circle")
                         .foregroundColor(.blue)
                 }
-                .buttonStyle(.plain)
-                .help("Copy to clipboard")
+                .menuStyle(.borderlessButton)
+                .frame(width: 24, height: 24)
+                .help("Copy options")
             }
         }
         .padding(8)

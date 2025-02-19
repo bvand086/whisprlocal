@@ -18,17 +18,29 @@ struct WhisprlocalApp: App {
     var body: some Scene {
         MenuBarExtra("Whisprlocal", systemImage: audioRecorder.isRecording ? "waveform.circle.fill" : "waveform") {
             VStack(spacing: 12) {
-                if transcriptionManager.isModelLoaded {
-                    Text("Model loaded")
-                        .foregroundColor(.green)
-                } else {
-                    Text("Model not loaded")
-                        .foregroundColor(.red)
+                // Status Section
+                HStack {
+                    if transcriptionManager.isModelLoaded {
+                        Label("Model Ready", systemImage: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    } else {
+                        Label("No Model", systemImage: "exclamationmark.circle.fill")
+                            .foregroundColor(.red)
+                    }
+                    
+                    Spacer()
+                    
+                    if audioRecorder.isRecording {
+                        Label("Recording", systemImage: "record.circle")
+                            .foregroundColor(.red)
+                            .help("Recording in progress")
+                    }
                 }
+                .font(.caption)
                 
                 Divider()
                 
-                // Show processing status
+                // Processing Status
                 if transcriptionManager.isProcessing {
                     HStack {
                         ProgressView()
@@ -36,23 +48,35 @@ struct WhisprlocalApp: App {
                             .frame(height: 20)
                         Text("Processing audio...")
                             .foregroundColor(.secondary)
+                            .font(.caption)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                    .background(Color(.textBackgroundColor).opacity(0.5))
+                    .cornerRadius(6)
                 }
                 
-                // Recent transcriptions list
-                ScrollView {
-                    VStack(spacing: 8) {
-                        ForEach(transcriptionManager.recentTranscriptions) { entry in
-                            TranscriptionEntryView(entry: entry, isHovered: false)
+                // Recent transcriptions list with header
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Recent Transcriptions")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            ForEach(transcriptionManager.recentTranscriptions) { entry in
+                                TranscriptionEntryView(entry: entry, isHovered: false)
+                            }
                         }
+                        .padding(.horizontal, 8)
                     }
-                    .padding(.horizontal, 8)
                 }
                 .frame(maxHeight: 200)
                 
                 Divider()
                 
-                Button(audioRecorder.isRecording ? "Stop Recording" : "Start Recording") {
+                // Recording Controls
+                Button(action: {
                     if audioRecorder.isRecording {
                         audioRecorder.stopRecording()
                     } else {
@@ -67,20 +91,37 @@ struct WhisprlocalApp: App {
                         print("Starting recording...")
                         audioRecorder.startRecording()
                     }
+                }) {
+                    Label(
+                        audioRecorder.isRecording ? "Stop Recording" : "Start Recording",
+                        systemImage: audioRecorder.isRecording ? "stop.circle.fill" : "record.circle"
+                    )
+                    .frame(maxWidth: .infinity)
                 }
                 .keyboardShortcut("r")
+                .buttonStyle(.bordered)
+                .tint(audioRecorder.isRecording ? .red : .blue)
+                .help(audioRecorder.isRecording ? "Stop recording (⌘R)" : "Start recording (⌘R)")
                 
                 Divider()
                 
-                SettingsLink {
-                    Text("Preferences...")
+                // Settings and Quit
+                HStack {
+                    SettingsLink {
+                        Label("Preferences...", systemImage: "gear")
+                    }
+                    .keyboardShortcut(",")
+                    
+                    Spacer()
+                    
+                    Button(role: .destructive) {
+                        NSApplication.shared.terminate(nil)
+                    } label: {
+                        Label("Quit", systemImage: "power")
+                    }
+                    .keyboardShortcut("q")
                 }
-                .keyboardShortcut(",")
-                
-                Button("Quit") {
-                    NSApplication.shared.terminate(nil)
-                }
-                .keyboardShortcut("q")
+                .buttonStyle(.borderless)
             }
             .padding()
             .frame(width: 300)

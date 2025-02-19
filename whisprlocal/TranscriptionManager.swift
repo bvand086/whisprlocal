@@ -65,9 +65,10 @@ class TranscriptionManager: ObservableObject {
     
     // Buffer for audio data
     private var audioBuffer: [Float] = []
-    private let maxBufferSize = 16000 * 30 // 30 seconds at 16kHz
+    private let maxBufferSize = 16000 * 120 // 120 seconds at 16kHz (increased from 30s for longer recordings)
     
-    // Store partial or continuous transcription text
+    // Processing state
+    @Published var isRecording = false
     @Published var transcribedText: String = ""
     
     private var whisper: Whisper?
@@ -88,10 +89,10 @@ class TranscriptionManager: ObservableObject {
     private init() {}
     
     func setLanguage(_ language: WhisperLanguage) async throws {
-        currentLanguage = language
-        
-        if isModelLoaded, let modelName = currentModelName {
-            try await loadModel(named: modelName)
+        // In SwiftWhisper 1.2.0, language selection is not supported
+        // We'll keep track of the user's preference but use auto-detection
+        await MainActor.run {
+            currentLanguage = .auto
         }
     }
     
@@ -172,51 +173,60 @@ class TranscriptionManager: ObservableObject {
             print("⚠️ Model not loaded or whisper instance is nil")
             return
         }
-        
+
         isProcessing = true
-        defer { isProcessing = false }
-        
+        defer { 
+            isProcessing = false
+            // Clear the buffer after processing, regardless of success
+            audioBuffer.removeAll()
+        }
+
         do {
             print("🎤 Processing audio buffer with \(audioBuffer.count) samples")
-            
-            // Normalize the audio buffer
+
+            // Normalize the audio buffer to [-1, 1] range
             let normalizedBuffer = audioBuffer.map { sample in
                 return max(-1.0, min(1.0, sample))
             }
-            
-            // SwiftWhisper version in use does not support the language parameter.
-            // If a forced language is desired, show a warning and proceed with auto-detection.
-            if currentLanguage != .auto {
-                print("⚠️ Warning: Forced language transcription is not supported in the current SwiftWhisper version. Using auto-detection instead.")
-            }
-            
+
+            // Process the entire audio buffer at once for better context
             let segments: [Segment] = try await whisper.transcribe(audioFrames: normalizedBuffer)
             
             var transcriptionText = ""
-            
+            var hasValidContent = false
+
             // Process the transcription segments
             for segment in segments {
-                let text = segment.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                print("🗣️ New segment: \(text)")
-                if !text.isEmpty && text != "[BLANK_AUDIO]" {
-                    if !transcriptionText.isEmpty {
-                        transcriptionText.append(" ")
-                    }
-                    transcriptionText.append(text)
+                let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                print("🗣️ Segment received: \(text)")
+                
+                // Skip empty or noise segments
+                guard !text.isEmpty && text != "[BLANK_AUDIO]" else {
+                    print("⏭️ Skipping empty or blank segment")
+                    continue
                 }
+
+                hasValidContent = true
+                if !transcriptionText.isEmpty {
+                    transcriptionText.append(" ")
+                }
+                transcriptionText.append(text)
             }
-            
-            if !transcriptionText.isEmpty {
+
+            // Only add to history if we have valid content
+            if hasValidContent {
                 print("📝 Adding transcription: \(transcriptionText)")
                 addTranscriptionEntry(transcriptionText)
+                transcribedText = transcriptionText
+            } else {
+                print("ℹ️ No valid speech content detected")
+                transcribedText = ""
             }
-            
-            // Clear the buffer after successful processing
-            audioBuffer.removeAll()
-            
+
         } catch {
             print("❌ Transcription error: \(error)")
             currentError = error
+            transcribedText = ""
         }
     }
     
@@ -226,11 +236,17 @@ class TranscriptionManager: ObservableObject {
     }
     
     private func addTranscriptionEntry(_ text: String) {
-        let entry = TranscriptionEntry(text: text.trimmingCharacters(in: .whitespacesAndNewlines), timestamp: Date())
+        let entry = TranscriptionEntry(text: text, timestamp: Date())
+        
+        // Insert at the beginning of the array (most recent first)
         recentTranscriptions.insert(entry, at: 0)
+        
+        // Keep only the most recent transcriptions
         if recentTranscriptions.count > maxTranscriptions {
             recentTranscriptions.removeLast()
         }
+        
+        print("📋 Updated transcription history (count: \(recentTranscriptions.count))")
     }
     
     enum TranscriptionError: LocalizedError {
