@@ -4,7 +4,7 @@ A macOS menu bar application for real-time audio transcription using Whisper.cpp
 
 ## Features
 
-- 🎤 Real-time audio transcription
+- 🎤 Batch audio transcription
 - 🔄 Multiple Whisper model support (tiny, base, small)
 - 🌍 Support for multiple languages
 - 📋 Easy copy-paste of transcriptions
