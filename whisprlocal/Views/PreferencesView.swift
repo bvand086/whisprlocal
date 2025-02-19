@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftWhisper
 
 struct PreferencesView: View {
     @StateObject private var modelManager = ModelManager.shared
@@ -29,90 +30,92 @@ struct ModelPreferencesView: View {
     @EnvironmentObject private var transcriptionManager: TranscriptionManager
     @State private var showError = false
     @State private var loadingModel: URL? = nil
+    @State private var selectedLanguage: WhisperLanguage = .english
     
-    private let defaultModel = DownloadButton.Model(
-        name: "Base Model",
-        info: "(English, optimized)",
-        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
-        filename: "ggml-base.en.bin"
-    )
+    private let availableModels = [
+        ("Tiny (English)", "ggml-tiny.en.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"),
+        ("Tiny (Multilingual)", "ggml-tiny.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"),
+        ("Base (English)", "ggml-base.en.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"),
+        ("Small (English)", "ggml-small.en.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin"),
+        ("Base (Multilingual)", "ggml-base.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin")
+    ]
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Transcription Models")
+        VStack(spacing: 16) {
+            // Language Selection
+            VStack(alignment: .leading) {
+                Text("Language")
+                    .font(.headline)
+                Picker("Language", selection: $selectedLanguage) {
+                    ForEach(WhisperLanguage.allCases) { language in
+                        Text(language.displayName)
+                            .tag(language)
+                    }
+                }
+                .onChange(of: selectedLanguage) { newLanguage in
+                    Task {
+                        do {
+                            try await transcriptionManager.setLanguage(newLanguage)
+                        } catch {
+                            print("Failed to set language: \(error)")
+                        }
+                    }
+                }
+            }
+            .padding(.bottom)
+            
+            Divider()
+            
+            // Model Management
+            Text("Model Management")
                 .font(.headline)
             
-            if modelManager.isDownloadingModel {
-                VStack(alignment: .leading, spacing: 8) {
-                    ProgressView("Downloading base model...", value: modelManager.downloadProgress)
-                    Button("Cancel") {
-                        modelManager.cancelDownload()
-                    }
-                    .controlSize(.small)
+            if transcriptionManager.isDownloading {
+                ProgressView(value: transcriptionManager.downloadProgress) {
+                    Text("Downloading model...")
                 }
             }
             
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ForEach(modelManager.downloadedModels, id: \.lastPathComponent) { modelURL in
-                        Button {
-                            loadModel(modelURL)
-                        } label: {
-                            HStack {
-                                Circle()
-                                    .fill(modelURL == modelManager.currentModel ? Color.green : Color.gray)
-                                    .frame(width: 8, height: 8)
-                                
-                                Text(modelURL.lastPathComponent)
-                                    .font(.system(.body, design: .monospaced))
-                                    .foregroundColor(.primary)
-                                
-                                Spacer()
-                                
-                                if modelURL == loadingModel {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                } else if modelURL == modelManager.currentModel {
-                                    Text("Active")
-                                        .foregroundColor(.green)
-                                        .font(.caption)
+            // Available Models List
+            List(availableModels, id: \.0) { model in
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(model.0)
+                            .font(.headline)
+                        Text(model.1)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    if modelManager.downloadedModels.contains(where: { $0.lastPathComponent == model.1 }) {
+                        if modelManager.currentModel?.lastPathComponent == model.1 {
+                            Text("Active")
+                                .foregroundColor(.green)
+                                .font(.caption)
+                        } else {
+                            Button("Load") {
+                                if let modelURL = modelManager.downloadedModels.first(where: { $0.lastPathComponent == model.1 }) {
+                                    loadModel(modelURL)
                                 }
                             }
                         }
-                        .buttonStyle(.plain)
-                        .padding(.vertical, 4)
-                    }
-                }
-            }
-            .frame(maxHeight: 120)
-            
-            if modelManager.downloadedModels.isEmpty {
-                HStack {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.yellow)
-                    Text("No models downloaded")
-                }
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    Button("Download Base Model") {
-                        Task {
-                            do {
-                                try await modelManager.downloadModel(
-                                    from: defaultModel.url,
-                                    filename: defaultModel.filename
-                                )
-                            } catch {
-                                showError = true
+                    } else {
+                        Button("Download") {
+                            Task {
+                                do {
+                                    guard let url = URL(string: model.2) else { return }
+                                    try await transcriptionManager.downloadModel(url: url, filename: model.1)
+                                } catch {
+                                    print("Failed to download model: \(error)")
+                                    showError = true
+                                }
                             }
                         }
                     }
-                    
-                    if modelManager.lastError != nil {
-                        Text("Download failed. Please check your internet connection.")
-                            .foregroundColor(.red)
-                            .font(.caption)
-                    }
                 }
+                .padding(.vertical, 4)
             }
             
             if let error = modelManager.lastError {
@@ -126,14 +129,6 @@ struct ModelPreferencesView: View {
         .padding()
         .alert("Download Error", isPresented: $showError) {
             Button("OK", role: .cancel) { }
-            Button("Retry") {
-                Task {
-                    try? await modelManager.downloadModel(
-                        from: defaultModel.url,
-                        filename: defaultModel.filename
-                    )
-                }
-            }
         } message: {
             Text("Failed to download the model. Please check your internet connection and try again.")
         }
@@ -145,7 +140,8 @@ struct ModelPreferencesView: View {
         loadingModel = modelURL
         Task {
             do {
-                try await transcriptionManager.loadModel(named: modelURL.lastPathComponent)
+                let modelName = modelURL.lastPathComponent
+                try await transcriptionManager.loadModel(named: modelName)
                 await MainActor.run {
                     modelManager.currentModel = modelURL
                 }

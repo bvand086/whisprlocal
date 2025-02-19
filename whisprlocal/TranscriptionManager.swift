@@ -2,6 +2,44 @@ import Foundation
 import SwiftWhisper
 import AVFoundation
 
+// Define WhisperLanguage enum
+public enum WhisperLanguage: String, CaseIterable, Identifiable {
+    case auto = "auto"
+    case english = "en"
+    case chinese = "zh"
+    case german = "de"
+    case spanish = "es"
+    case russian = "ru"
+    case korean = "ko"
+    case french = "fr"
+    case japanese = "ja"
+    case portuguese = "pt"
+    case turkish = "tr"
+    case polish = "pl"
+    case catalan = "ca"
+    case dutch = "nl"
+    case arabic = "ar"
+    case swedish = "sv"
+    case italian = "it"
+    case indonesian = "id"
+    case hindi = "hi"
+    case finnish = "fi"
+    case vietnamese = "vi"
+    case hebrew = "iw"
+    case ukrainian = "uk"
+    case greek = "el"
+    case malay = "ms"
+    
+    public var id: String { rawValue }
+    
+    public var displayName: String {
+        switch self {
+        case .auto: return "Auto Detect"
+        default: return rawValue.uppercased()
+        }
+    }
+}
+
 struct TranscriptionEntry: Identifiable {
     let id = UUID()
     let text: String
@@ -16,6 +54,10 @@ class TranscriptionManager: ObservableObject {
     @Published private(set) var isDownloading = false
     @Published private(set) var downloadProgress: Double = 0
     @Published private(set) var isProcessing = false
+    @Published var currentLanguage: WhisperLanguage = .english
+    
+    // Store the name of the currently loaded model so that it can be reloaded with a new language.
+    private var currentModelName: String?
     
     // Store recent transcriptions
     @Published private(set) var recentTranscriptions: [TranscriptionEntry] = []
@@ -45,15 +87,25 @@ class TranscriptionManager: ObservableObject {
     
     private init() {}
     
+    func setLanguage(_ language: WhisperLanguage) async throws {
+        currentLanguage = language
+        
+        if isModelLoaded, let modelName = currentModelName {
+            try await loadModel(named: modelName)
+        }
+    }
+    
     func loadModel(named modelName: String) async throws {
-        // Validate GGML model
         let ggmlModelURL = modelsFolderURL.appendingPathComponent(modelName)
         guard FileManager.default.fileExists(atPath: ggmlModelURL.path) else {
             throw TranscriptionError.modelNotFound(type: "GGML")
         }
         
-        // Initialize Whisper with the model
-        whisper = try Whisper(fromFileURL: ggmlModelURL)
+        // Save the model name for future reloads (e.g. when changing language)
+        currentModelName = modelName
+        
+        // Initialize Whisper with only the file URL
+        whisper = Whisper(fromFileURL: ggmlModelURL)
         
         await MainActor.run {
             isModelLoaded = true
@@ -127,25 +179,25 @@ class TranscriptionManager: ObservableObject {
         do {
             print("🎤 Processing audio buffer with \(audioBuffer.count) samples")
             
-            let segments = try await withCheckedThrowingContinuation { continuation in
-                whisper.transcribe(audioFrames: audioBuffer) { result in
-                    switch result {
-                    case .success(let segments):
-                        continuation.resume(returning: segments)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
-                    }
-                }
+            // Normalize the audio buffer
+            let normalizedBuffer = audioBuffer.map { sample in
+                return max(-1.0, min(1.0, sample))
             }
+            
+            // SwiftWhisper version in use does not support the language parameter.
+            // If a forced language is desired, show a warning and proceed with auto-detection.
+            if currentLanguage != .auto {
+                print("⚠️ Warning: Forced language transcription is not supported in the current SwiftWhisper version. Using auto-detection instead.")
+            }
+            
+            let segments: [Segment] = try await whisper.transcribe(audioFrames: normalizedBuffer)
             
             var transcriptionText = ""
             
-            // Process all segments
+            // Process the transcription segments
             for segment in segments {
                 let text = segment.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
                 print("🗣️ New segment: \(text)")
-                
-                // Skip [BLANK_AUDIO] segments
                 if !text.isEmpty && text != "[BLANK_AUDIO]" {
                     if !transcriptionText.isEmpty {
                         transcriptionText.append(" ")

@@ -5,9 +5,11 @@ struct PreferencesWindow: View {
     @State private var isShowingModelPicker = false
     
     private let availableModels = [
-        ("Tiny", "ggml-tiny.en.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"),
-        ("Base", "ggml-base.en.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"),
-        ("Small", "ggml-small.en.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin")
+        ("Tiny (English)", "ggml-tiny.en.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"),
+        ("Tiny (Multilingual)", "ggml-tiny.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"),
+        ("Base (English)", "ggml-base.en.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"),
+        ("Small (English)", "ggml-small.en.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin"),
+        ("Base (Multilingual)", "ggml-base.bin", "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin")
     ]
     
     var body: some View {
@@ -36,10 +38,8 @@ struct PreferencesWindow: View {
                     Button("Download") {
                         Task {
                             do {
-                                try await transcriptionManager.downloadModel(
-                                    url: URL(string: model.2)!,
-                                    filename: model.1
-                                )
+                                guard let url = URL(string: model.2) else { return }
+                                try await transcriptionManager.downloadModel(url: url, filename: model.1)
                             } catch {
                                 print("Failed to download model: \(error)")
                             }
