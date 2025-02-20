@@ -1,13 +1,16 @@
 import Foundation
 import HotKey
 import AppKit
+import SwiftUI
 
 class GlobalShortcutManager: ObservableObject {
     static let shared = GlobalShortcutManager()
     
     private var recordingHotKey: HotKey?
+    private var clipboardHotKey: HotKey?
     private let audioRecorder = AudioRecorder.shared
     private let transcriptionManager = TranscriptionManager.shared
+    private var clipboardWindowController: NSWindowController?
     
     private init() {
         setupGlobalShortcuts()
@@ -15,9 +18,39 @@ class GlobalShortcutManager: ObservableObject {
     
     private func setupGlobalShortcuts() {
         // Set up ⌘⇧Space for recording
-        recordingHotKey = HotKey(key: .space, modifiers: [.command, .shift])
+        recordingHotKey = HotKey(keyCombo: KeyCombo(key: .space, modifiers: [.command, .shift]))
         recordingHotKey?.keyDownHandler = { [weak self] in
             self?.toggleRecording()
+        }
+        
+        // Set up ⌘⇧K for clipboard history
+        clipboardHotKey = HotKey(keyCombo: KeyCombo(key: .k, modifiers: [.command, .shift]))
+        clipboardHotKey?.keyDownHandler = { [weak self] in
+            self?.toggleClipboardWindow()
+        }
+    }
+    
+    private func toggleClipboardWindow() {
+        if let controller = clipboardWindowController {
+            if controller.window?.isVisible == true {
+                controller.close()
+            } else {
+                controller.window?.makeKeyAndOrderFront(nil)
+                NSApplication.shared.activate(ignoringOtherApps: true)
+            }
+        } else {
+            let controller = NSWindowController(window: NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 400, height: 500),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            ))
+            controller.window?.title = "Clipboard History"
+            controller.window?.contentView = NSHostingView(rootView: ClipboardHistoryView())
+            controller.window?.center()
+            controller.showWindow(nil)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            clipboardWindowController = controller
         }
     }
     

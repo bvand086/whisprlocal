@@ -9,6 +9,52 @@ import SwiftUI
 import SwiftWhisper
 import AVFoundation
 
+// Add this view for displaying hotkey information
+struct HotkeyInfoView: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Keyboard Shortcuts")
+                    .font(.headline)
+                
+                Spacer()
+                
+                Button(action: {
+                    dismiss()
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("⌘⇧Space")
+                        .font(.system(.body, design: .monospaced))
+                        .padding(4)
+                        .background(Color(.textBackgroundColor))
+                        .cornerRadius(4)
+                    Text("Start/Stop Recording")
+                }
+                
+                HStack {
+                    Text("⌘⇧K")
+                        .font(.system(.body, design: .monospaced))
+                        .padding(4)
+                        .background(Color(.textBackgroundColor))
+                        .cornerRadius(4)
+                    Text("Show Clipboard History")
+                }
+            }
+        }
+        .padding()
+        .frame(width: 300)
+    }
+}
+
 @main
 struct WhisprlocalApp: App {
     // Add state objects for managing transcription and audio recording
@@ -20,6 +66,7 @@ struct WhisprlocalApp: App {
     @State private var isTranscriptionWindowShown = false
     @State private var isClipboardHistoryShown = false
     @State private var clipboardWindowController: NSWindowController?
+    @State private var isShowingHotkeyInfo = false
     
     var body: some Scene {
         MenuBarExtra("Whisprlocal", systemImage: audioRecorder.isRecording ? "waveform.circle.fill" : "waveform") {
@@ -38,6 +85,18 @@ struct WhisprlocalApp: App {
                     }
                     
                     Spacer()
+                    
+                    Button(action: {
+                        isShowingHotkeyInfo = true
+                    }) {
+                        Image(systemName: "keyboard")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("View keyboard shortcuts")
+                    .sheet(isPresented: $isShowingHotkeyInfo) {
+                        HotkeyInfoView()
+                    }
                     
                     if audioRecorder.isRecording {
                         Label("Recording", systemImage: "record.circle")

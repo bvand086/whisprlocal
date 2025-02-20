@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		8B4CC1252D6761E600C53024 /* HotKey in Frameworks */ = {isa = PBXBuildFile; productRef = 8B4CC1242D6761E600C53024 /* HotKey */; };
-		8B4CC1272D67621800C53024 /* File.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8B4CC1262D67621800C53024 /* File.txt */; };
+		8B4CC1272D67621800C53024 /* Go ahead and test the hockey again..txt in Resources */ = {isa = PBXBuildFile; fileRef = 8B4CC1262D67621800C53024 /* Go ahead and test the hockey again..txt */; };
 		8B9C230B2D63EEE500CEF6F5 /* SwiftWhisper in Frameworks */ = {isa = PBXBuildFile; productRef = 8B9C230A2D63EEE500CEF6F5 /* SwiftWhisper */; };
 /* End PBXBuildFile section */
 
@@ -30,7 +30,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		8B4CC1262D67621800C53024 /* File.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = File.txt; sourceTree = "<group>"; };
+		8B4CC1262D67621800C53024 /* Go ahead and test the hockey again..txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Go ahead and test the hockey again..txt"; sourceTree = "<group>"; };
 		8B9C22D62D63EB4600CEF6F5 /* whisprlocal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = whisprlocal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8B9C22E72D63EB4800CEF6F5 /* whisprlocalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = whisprlocalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8B9C22F12D63EB4800CEF6F5 /* whisprlocalUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = whisprlocalUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -84,7 +84,7 @@
 		8B9C22CD2D63EB4600CEF6F5 = {
 			isa = PBXGroup;
 			children = (
-				8B4CC1262D67621800C53024 /* File.txt */,
+				8B4CC1262D67621800C53024 /* Go ahead and test the hockey again..txt */,
 				8B9C22D82D63EB4600CEF6F5 /* whisprlocal */,
 				8B9C22EA2D63EB4800CEF6F5 /* whisprlocalTests */,
 				8B9C22F42D63EB4800CEF6F5 /* whisprlocalUITests */,
@@ -236,7 +236,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				8B4CC1272D67621800C53024 /* File.txt in Resources */,
+				8B4CC1272D67621800C53024 /* Go ahead and test the hockey again..txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
