@@ -71,6 +71,9 @@ class TranscriptionManager: ObservableObject {
     @Published var isRecording = false
     @Published var transcribedText: String = ""
     
+    // Real-time transcription update handler
+    var onTranscriptionUpdate: ((String) -> Void)?
+    
     private var whisper: Whisper?
     
     // Add a serial queue for audio processing
@@ -239,11 +242,16 @@ class TranscriptionManager: ObservableObject {
                 transcriptionText.append(text)
             }
 
-            // Only add to history if we have valid content
+            // Only add to history and update if we have valid content
             if hasValidContent {
                 print("📝 Final transcription: '\(transcriptionText)'")
                 addTranscriptionEntry(transcriptionText)
                 transcribedText = transcriptionText
+                
+                // Call the real-time update handler
+                await MainActor.run {
+                    onTranscriptionUpdate?(transcriptionText)
+                }
             } else {
                 print("ℹ️ No valid speech content detected in any segments")
                 transcribedText = ""
