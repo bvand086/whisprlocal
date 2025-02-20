@@ -16,6 +16,7 @@ struct WhisprlocalApp: App {
     @StateObject private var audioRecorder = AudioRecorder.shared
     @StateObject private var clipboardManager = ClipboardManager.shared
     @StateObject private var modelManager = ModelManager.shared
+    @StateObject private var globalShortcutManager = GlobalShortcutManager.shared
     @State private var isTranscriptionWindowShown = false
     @State private var isClipboardHistoryShown = false
     @State private var clipboardWindowController: NSWindowController?
