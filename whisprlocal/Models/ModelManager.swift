@@ -244,9 +244,28 @@ class ModelManager: NSObject, ObservableObject {
         }
     }
     
+    func deleteModel(_ modelURL: URL) async throws {
+        // Don't allow deletion of currently loaded model
+        guard modelURL != currentModel else {
+            throw ModelError.cannotDeleteActiveModel
+        }
+        
+        do {
+            try FileManager.default.removeItem(at: modelURL)
+            await MainActor.run {
+                // Update the downloadedModels array
+                downloadedModels.removeAll { $0 == modelURL }
+            }
+        } catch {
+            print("Error deleting model: \(error)")
+            throw error
+        }
+    }
+    
     enum ModelError: LocalizedError {
         case downloadFailed
         case coreMLCompilationFailed
+        case cannotDeleteActiveModel
         
         var errorDescription: String? {
             switch self {
@@ -254,6 +273,8 @@ class ModelManager: NSObject, ObservableObject {
                 return "Failed to download the model file"
             case .coreMLCompilationFailed:
                 return "Failed to compile the Core ML model"
+            case .cannotDeleteActiveModel:
+                return "Cannot delete the currently active model"
             }
         }
     }

@@ -112,14 +112,47 @@ class TranscriptionManager: ObservableObject {
         currentModelName = modelName
         
         print("🚀 Initializing Whisper with model: \(modelName)")
-        // Initialize Whisper with only the file URL
-        whisper = Whisper(fromFileURL: ggmlModelURL)
+        
+        // Initialize model in an autorelease pool
+        let whisperInstance = autoreleasepool { () -> Whisper? in
+            return Whisper(fromFileURL: ggmlModelURL)
+        }
+        
+        // Add a small delay to allow memory to stabilize
+        try await Task.sleep(nanoseconds: 100_000_000) // 100ms delay
+        
+        guard let whisperInstance = whisperInstance else {
+            throw TranscriptionError.modelInitializationFailed
+        }
+        
+        self.whisper = whisperInstance
         
         await MainActor.run {
             isModelLoaded = true
-            currentError = nil  // Clear any previous errors
+            currentError = nil
             print("✅ Model loaded successfully")
         }
+    }
+    
+    func unloadCurrentModel() async throws {
+        print("🗑️ Unloading current model")
+        await MainActor.run {
+            whisper = nil
+            isModelLoaded = false
+            currentModelName = nil
+        }
+        
+        // Force multiple cleanup cycles
+        print("♻️ Triggering aggressive memory cleanup")
+        for _ in 0..<3 {
+            _ = autoreleasepool { () -> Bool in
+                // Empty autorelease pool to help with memory cleanup
+                return true
+            }
+        }
+        
+        // Add a small delay to allow memory to be properly released
+        try await Task.sleep(nanoseconds: 500_000_000) // 500ms delay
     }
     
     func downloadModel(url: URL, filename: String) async throws {
@@ -312,6 +345,7 @@ class TranscriptionManager: ObservableObject {
         case modelNotFound(type: String)
         case downloadFailed
         case invalidAudioData
+        case modelInitializationFailed
         
         var errorDescription: String? {
             switch self {
@@ -321,6 +355,8 @@ class TranscriptionManager: ObservableObject {
                 return "Failed to download the model file"
             case .invalidAudioData:
                 return "Invalid audio data received"
+            case .modelInitializationFailed:
+                return "Failed to initialize the model"
             }
         }
     }

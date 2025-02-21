@@ -33,7 +33,8 @@ class GlobalShortcutManager: ObservableObject {
         // Only paste if we're actively recording
         guard audioRecorder.isRecording else { return }
         
-        // Paste the text
+        // Clear existing content and paste new text
+        clearActiveTextFieldContent()
         pasteText(text)
     }
     
@@ -151,18 +152,8 @@ class GlobalShortcutManager: ObservableObject {
     
     private func stopRecording() {
         guard audioRecorder.isRecording else { return }
-        
         audioRecorder.stopRecording()
-        // Wait for transcription to complete and then paste
-        Task {
-            // Wait for a short delay to allow transcription to complete
-            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
-            await MainActor.run {
-                if let text = transcriptionManager.recentTranscriptions.first?.text {
-                    self.pasteText(text)
-                }
-            }
-        }
+        // No need to paste here since we're using real-time updates
     }
     
     private func toggleRecording() {
