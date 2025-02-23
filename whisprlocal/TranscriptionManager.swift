@@ -90,6 +90,12 @@ class TranscriptionManager: ObservableObject {
         return modelsPath
     }()
     
+    // Audio visualization
+    @Published private(set) var audioLevels: [Float] = []
+    private let maxAudioLevels = 50
+    private let audioLevelUpdateInterval: TimeInterval = 1/30 // 30fps
+    private var audioLevelTimer: Timer?
+    
     private init() {}
     
     func setLanguage(_ language: WhisperLanguage) async throws {
@@ -193,12 +199,24 @@ class TranscriptionManager: ObservableObject {
         
         let frameCount = Int(buffer.frameLength)
         
-        // Copy and normalize audio data to [-1, 1] range
+        // Calculate RMS value for this buffer
+        var sumSquares: Float = 0.0
         channelData.withMemoryRebound(to: Float.self, capacity: frameCount) { ptr in
             for i in 0..<frameCount {
                 let sample = max(-1.0, min(1.0, ptr[i]))
+                sumSquares += sample * sample
                 audioBuffer.append(sample)
             }
+        }
+        
+        let rms = sqrt(sumSquares / Float(frameCount))
+        // Normalize RMS to 0-1 range with some headroom
+        let normalizedLevel = min(rms * 4, 1.0)
+        
+        // Update audio levels array
+        audioLevels.append(normalizedLevel)
+        if audioLevels.count > maxAudioLevels {
+            audioLevels.removeFirst()
         }
         
         // If buffer gets too large, remove oldest data
@@ -330,6 +348,26 @@ class TranscriptionManager: ObservableObject {
         ClipboardManager.shared.addToHistory(text: text, type: .transcription)
         
         print("📋 Updated transcription history (count: \(recentTranscriptions.count))")
+    }
+    
+    func startRecording() {
+        isRecording = true
+        // Start audio level timer
+        audioLevelTimer = Timer.scheduledTimer(withTimeInterval: audioLevelUpdateInterval, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            // If no new audio data, add a zero level
+            if self.audioLevels.count < self.maxAudioLevels {
+                self.audioLevels.append(0)
+            }
+        }
+    }
+    
+    func stopRecording() {
+        isRecording = false
+        audioLevelTimer?.invalidate()
+        audioLevelTimer = nil
+        // Clear audio levels
+        audioLevels.removeAll()
     }
     
     enum TranscriptionError: LocalizedError {

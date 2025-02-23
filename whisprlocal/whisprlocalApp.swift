@@ -123,6 +123,16 @@ struct WhisprlocalApp: App {
                 
                 Divider()
                 
+                // Add Transcription Window Button
+                Button(action: {
+                    TranscriptionWindowController.showWindow()
+                }) {
+                    Label("Show Transcription Window", systemImage: "waveform.and.magnifyingglass")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .help("Open transcription window with waveform visualization")
+                
                 // Processing Status
                 if transcriptionManager.isProcessing {
                     HStack {

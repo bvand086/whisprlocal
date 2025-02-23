@@ -7,7 +7,7 @@ A macOS menu bar application for real-time audio transcription using Whisper.cpp
 - 🎤 Batch audio transcription
 - 🔄 Multiple Whisper model support (tiny, base, small)
 - 🌍 Support for multiple languages
-- 📋 Easy copy-paste of transcriptions
+- 📋 Enhanced clipboard management for easy copy-paste of transcriptions
 - ⚡️ Optimized for Apple Silicon
 - 🎯 Native macOS menu bar integration
 
@@ -29,7 +29,7 @@ A macOS menu bar application for real-time audio transcription using Whisper.cpp
 2. Open Preferences (⌘,) and download a Whisper model
 3. Click the menu bar icon to start/stop recording
 4. View transcriptions in real-time
-5. Copy transcriptions to clipboard with optional timestamps
+5. Use the improved paste mechanism to copy transcriptions to clipboard with optional timestamps
 
 ## Models
 
@@ -48,6 +48,7 @@ The project uses SwiftUI and AVFoundation for the frontend and audio capture, wi
 - `TranscriptionManager`: Handles Whisper model loading and transcription
 - `AudioRecorder`: Manages audio capture and processing
 - `ModelManager`: Handles model downloading and management
+- `Paster`: Manages clipboard operations with enhanced paste functionality
 
 ## Project Structure 
 whisprlocal/
@@ -59,8 +60,9 @@ whisprlocal/
 │   ├── ContentView.swift          # Main UI
 │   ├── PreferencesView.swift      # Settings UI
 │   └── DownloadButton.swift       # Model download UI
+├── Utilities/
+│   └── Paster.swift               # Clipboard management
 └── TranscriptionManager.swift     # Core transcription logic
-
 
 ## Building from Source
 
