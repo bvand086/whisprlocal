@@ -3,53 +3,53 @@ import HotKey
 import AppKit
 import SwiftUI
 
+// Text field state structure
+private struct TextFieldState {
+    var element: AXUIElement
+    var text: String
+    var selectedRange: NSRange
+    var lastUpdateTime: Date
+}
+
 class GlobalShortcutManager: ObservableObject {
     static let shared = GlobalShortcutManager()
     
-    private var recordingHotKey: HotKey?
+    private var transcriptionHotKey: HotKey?
     private var clipboardHotKey: HotKey?
     private let audioRecorder = AudioRecorder.shared
     private let transcriptionManager = TranscriptionManager.shared
     private var clipboardWindowController: NSWindowController?
+    private var transcriptionUpdateTimer: Timer?
+    private var lastTranscription: String = ""
     
-    // Properties for double-tap detection
-    private var lastKeyPressTime: Date?
-    private let doubleTapTimeThreshold: TimeInterval = 0.3 // 300ms window for double-tap
-    private var isHoldMode = false
-    private var isDoubleTapMode = false
+    // Text field state management
+    private var currentTextFieldState: TextFieldState?
+    private var textUpdateQueue = DispatchQueue(label: "com.whisprlocal.textupdate")
+    private var lastTextUpdateError: Date?
+    private let errorCooldownInterval: TimeInterval = 1.0
     
     private init() {
         setupGlobalShortcuts()
-        setupTranscriptionHandler()
+        // Request accessibility permissions if needed
+        requestAccessibilityPermissions()
     }
     
-    private func setupTranscriptionHandler() {
-        transcriptionManager.onTranscriptionUpdate = { [weak self] text in
-            self?.handleTranscriptionUpdate(text)
-        }
-    }
-    
-    private func handleTranscriptionUpdate(_ text: String) {
-        // Only paste if we're actively recording
-        guard audioRecorder.isRecording else { return }
-        
-        // Clear existing content and paste new text
-        clearActiveTextFieldContent()
-        pasteText(text)
+    private func requestAccessibilityPermissions() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        let trusted = AXIsProcessTrustedWithOptions(options as CFDictionary)
+        print("Application accessibility trusted: \(trusted)")
     }
     
     private func setupGlobalShortcuts() {
-        // Set up ⌘⇧Space for recording
-        recordingHotKey = HotKey(keyCombo: KeyCombo(key: .space, modifiers: [.command, .shift]))
+        // Set up ⌘⇧Space for transcription
+        transcriptionHotKey = HotKey(keyCombo: KeyCombo(key: .space, modifiers: [.command, .shift]))
         
-        // Handle key down
-        recordingHotKey?.keyDownHandler = { [weak self] in
-            self?.handleKeyDown()
+        transcriptionHotKey?.keyDownHandler = { [weak self] in
+            self?.startTranscriptionHotKeyAction()
         }
         
-        // Handle key up
-        recordingHotKey?.keyUpHandler = { [weak self] in
-            self?.handleKeyUp()
+        transcriptionHotKey?.keyUpHandler = { [weak self] in
+            self?.endTranscriptionHotKeyAction()
         }
         
         // Set up ⌘⇧K for clipboard history
@@ -59,160 +59,434 @@ class GlobalShortcutManager: ObservableObject {
         }
     }
     
-    private func handleKeyDown() {
-        let now = Date()
-        
-        if let lastPress = lastKeyPressTime,
-           now.timeIntervalSince(lastPress) < doubleTapTimeThreshold {
-            // Double-tap detected
-            isDoubleTapMode = true
-            isHoldMode = false
-            toggleRecording()
-        } else {
-            // Single press - start hold mode
-            isHoldMode = true
-            isDoubleTapMode = false
-            startRecording()
-        }
-        
-        lastKeyPressTime = now
-    }
-    
-    private func handleKeyUp() {
-        guard isHoldMode else { return }
-        
-        // If we're in hold mode and the key is released, stop recording
-        isHoldMode = false
-        stopRecording()
-    }
-    
-    private func startRecording() {
-        guard !audioRecorder.isRecording else { return }
-        
-        if audioRecorder.microphonePermission != .authorized {
-            Task {
-                await audioRecorder.requestMicrophonePermissionIfNeeded()
+    private func startTranscriptionHotKeyAction() {
+        // Start recording if not already in progress
+        if !audioRecorder.isRecording {
+            if audioRecorder.microphonePermission != .authorized {
+                Task {
+                    await audioRecorder.requestMicrophonePermissionIfNeeded()
+                }
+                return
             }
-            return
-        }
-        
-        if !transcriptionManager.isModelLoaded {
-            // Try to load the model
-            Task {
-                if let modelURL = ModelManager.shared.getLastUsedModelURL() {
-                    do {
-                        try await transcriptionManager.loadModel(named: modelURL.lastPathComponent)
-                        audioRecorder.startRecording()
-                    } catch {
-                        print("Failed to load model: \(error)")
+            
+            if !transcriptionManager.isModelLoaded {
+                Task {
+                    if let modelURL = ModelManager.shared.getLastUsedModelURL() {
+                        do {
+                            try await transcriptionManager.loadModel(named: modelURL.lastPathComponent)
+                            audioRecorder.startRecording()
+                            // Don't start timer here anymore
+                        } catch {
+                            print("Failed to load model: \(error)")
+                        }
                     }
                 }
+                return
             }
+            
+            audioRecorder.startRecording()
+            lastTranscription = ""
+            
+            // Cache the current text field state
+            cacheCurrentTextFieldState()
+        }
+        
+        // Don't start timer here anymore - we'll update text after transcription is complete
+    }
+    
+    private func endTranscriptionHotKeyAction() {
+        transcriptionUpdateTimer?.invalidate()
+        transcriptionUpdateTimer = nil
+        
+        if audioRecorder.isRecording {
+            audioRecorder.stopRecording()
+            // Remove the delayed update since we'll handle it when transcription is complete
+            currentTextFieldState = nil
+        }
+    }
+    
+    private func startTranscriptionUpdateTimer() {
+        transcriptionUpdateTimer?.invalidate()
+        // Update the active text field every 0.3 seconds while the key is held down
+        transcriptionUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+            self?.updateActiveTextField()
+        }
+    }
+    
+    private func cacheCurrentTextFieldState() {
+        guard let focusedElement = getFocusedTextElement() else {
+            print("No focused text element found")
             return
         }
         
-        // Clear any existing text in the active text field before starting
-        clearActiveTextFieldContent()
-        audioRecorder.startRecording()
+        // Get current text and selection range
+        var value: CFTypeRef?
+        var range: CFTypeRef?
+        
+        let textResult = AXUIElementCopyAttributeValue(focusedElement, kAXValueAttribute as CFString, &value)
+        let rangeResult = AXUIElementCopyAttributeValue(focusedElement, kAXSelectedTextRangeAttribute as CFString, &range)
+        
+        if textResult == .success,
+           let text = value as? String,
+           rangeResult == .success,
+           let selectionRange = range as? NSRange {
+            currentTextFieldState = TextFieldState(
+                element: focusedElement,
+                text: text,
+                selectedRange: selectionRange,
+                lastUpdateTime: Date()
+            )
+            print("Cached text field state: \(text.count) chars, selection: \(selectionRange)")
+        }
     }
     
-    private func clearActiveTextFieldContent() {
-        // Simulate Command+A to select all
-        let source = CGEventSource(stateID: .hidSystemState)
+    private func updateActiveTextField() {
+        let transcription = transcriptionManager.transcribedText
+        guard !transcription.isEmpty else { return }
         
-        // Key down for Command
-        let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true)
-        cmdDown?.flags = .maskCommand
-        cmdDown?.post(tap: .cghidEventTap)
+        // Only update if the transcription has changed
+        guard transcription != lastTranscription else { return }
         
-        // Key down for A
-        let aDown = CGEvent(keyboardEventSource: source, virtualKey: 0x00, keyDown: true)
-        aDown?.flags = .maskCommand
-        aDown?.post(tap: .cghidEventTap)
+        print("📝 Attempting to update text field with transcription: '\(transcription)'")
         
-        // Key up for A
-        let aUp = CGEvent(keyboardEventSource: source, virtualKey: 0x00, keyDown: false)
-        aUp?.flags = .maskCommand
-        aUp?.post(tap: .cghidEventTap)
+        // Always update clipboard first
+        updateClipboardContent(transcription)
         
-        // Key up for Command
-        let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
-        cmdUp?.post(tap: .cghidEventTap)
+        // Since this is called after transcription is complete,
+        // we should try to get the text field state again
+        cacheCurrentTextFieldState()
         
-        // Small delay to ensure selection is complete
-        usleep(50000) // 50ms delay
-        
-        // Simulate Delete key to remove selected text
-        let deleteDown = CGEvent(keyboardEventSource: source, virtualKey: 0x33, keyDown: true)
-        deleteDown?.post(tap: .cghidEventTap)
-        
-        let deleteUp = CGEvent(keyboardEventSource: source, virtualKey: 0x33, keyDown: false)
-        deleteUp?.post(tap: .cghidEventTap)
+        textUpdateQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Try to paste if we have a focused text element
+            if let focusedElement = self.getFocusedTextElement() {
+                print("✅ Found focused text element, attempting update")
+                // Try direct text field update first
+                let success = self.tryDirectTextUpdate(focusedElement: focusedElement, text: transcription)
+                
+                if !success {
+                    print("⚠️ Direct update failed, falling back to paste")
+                    // If direct update fails, try pasting
+                    self.simulateCommandV()
+                }
+            } else {
+                print("⚠️ No focused text element found for paste operation")
+            }
+        }
     }
     
-    private func stopRecording() {
-        guard audioRecorder.isRecording else { return }
-        audioRecorder.stopRecording()
-        // No need to paste here since we're using real-time updates
-    }
-    
-    private func toggleRecording() {
-        if audioRecorder.isRecording {
-            stopRecording()
+    private func updateClipboardContent(_ text: String) {
+        print("📋 Updating clipboard with: '\(text)'")
+        
+        // Store original clipboard content
+        let pasteboard = NSPasteboard.general
+        let originalContent = pasteboard.string(forType: .string)
+        
+        // Set new content with retry
+        var pasteboardSetSuccess = false
+        for _ in 1...3 {
+            pasteboard.clearContents()
+            pasteboardSetSuccess = pasteboard.setString(text, forType: .string)
+            if pasteboardSetSuccess {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        
+        if pasteboardSetSuccess {
+            print("✏️ Successfully updated clipboard content")
+            // Don't restore the original content - we want to keep the transcription in clipboard
+            lastTranscription = text
         } else {
-            startRecording()
+            print("❌ Failed to update clipboard content")
+        }
+    }
+    
+    private func simulateCommandV() {
+        print("⌨️ Simulating Cmd+V paste")
+        
+        // Create event source with explicit permissions
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            print("❌ Failed to create event source")
+            return
+        }
+        source.localEventsSuppressionInterval = 0.0
+        
+        // Ensure we have proper key codes
+        let vKey: CGKeyCode = 0x09  // 'V' key
+        let cmdKey: CGEventFlags = .maskCommand
+        
+        // Create key events
+        guard let cmdDown = CGEvent(source: nil),
+              let vKeyDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true),
+              let vKeyUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false),
+              let cmdUp = CGEvent(source: nil) else {
+            print("❌ Failed to create keyboard events")
+            return
+        }
+        
+        // Set command flag
+        cmdDown.flags = cmdKey
+        vKeyDown.flags = cmdKey
+        vKeyUp.flags = cmdKey
+        cmdUp.flags = []
+        
+        // Post events with small delays
+        cmdDown.post(tap: CGEventTapLocation.cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.05)
+        vKeyDown.post(tap: CGEventTapLocation.cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.05)
+        vKeyUp.post(tap: CGEventTapLocation.cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.05)
+        cmdUp.post(tap: CGEventTapLocation.cghidEventTap)
+    }
+    
+    private func tryDirectTextUpdate(focusedElement: AXUIElement, text: String) -> Bool {
+        // First try to get current text to verify we can interact with the element
+        var currentValue: CFTypeRef?
+        let getCurrentResult = AXUIElementCopyAttributeValue(focusedElement, kAXValueAttribute as CFString, &currentValue)
+        
+        guard getCurrentResult == .success else {
+            print("❌ Cannot read current text value: \(getCurrentResult)")
+            return false
+        }
+        
+        // Calculate text update
+        let newText: String
+        if let currentState = currentTextFieldState {
+            newText = calculateTextUpdate(currentText: currentState.text, newTranscription: text)
+        } else {
+            newText = text
+        }
+        
+        // Try to set the new text
+        let setResult = AXUIElementSetAttributeValue(focusedElement, kAXValueAttribute as CFString, newText as CFString)
+        
+        if setResult == .success {
+            // Update cached state
+            currentTextFieldState?.text = newText
+            currentTextFieldState?.lastUpdateTime = Date()
+            lastTranscription = text
+            return true
+        }
+        
+        print("❌ Failed to set text value: \(setResult)")
+        return false
+    }
+    
+    private func calculateTextUpdate(currentText: String, newTranscription: String) -> String {
+        // If current text is empty, just return the new transcription
+        guard !currentText.isEmpty else { return newTranscription }
+        
+        // If new transcription is shorter, something went wrong - use new transcription
+        if newTranscription.count < lastTranscription.count {
+            return newTranscription
+        }
+        
+        // Get the difference between last transcription and new transcription
+        if !lastTranscription.isEmpty {
+            let additionalText = String(newTranscription.dropFirst(lastTranscription.count))
+            if !additionalText.isEmpty {
+                // Append only the new text to the current content
+                return currentText + additionalText
+            }
+        }
+        
+        // Fallback: replace entire text
+        return newTranscription
+    }
+    
+    private func isSameElement(_ element1: AXUIElement, as element2: AXUIElement) -> Bool {
+        var pid1: pid_t = 0
+        var pid2: pid_t = 0
+        
+        guard AXUIElementGetPid(element1, &pid1) == .success,
+              AXUIElementGetPid(element2, &pid2) == .success else {
+            return false
+        }
+        
+        // Compare process IDs and element memory addresses
+        return pid1 == pid2 && element1 == element2
+    }
+    
+    private func getFocusedTextElement() -> AXUIElement? {
+        let systemWide = AXUIElementCreateSystemWide()
+        
+        // Add a small delay to ensure the focus has settled
+        Thread.sleep(forTimeInterval: 0.1)
+        
+        var focusedElement: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement)
+        
+        print("🔍 Getting focused element - result: \(result)")
+        
+        // More detailed error handling
+        switch result {
+        case .success:
+            guard let element = focusedElement else {
+                print("❌ Focused element is nil despite success")
+                return nil
+            }
+            let axElement = unsafeBitCast(element, to: AXUIElement.self)
+            
+            // Get the process ID for debugging
+            var pid: pid_t = 0
+            let pidResult = AXUIElementGetPid(axElement, &pid)
+            if pidResult == .success {
+                if let appName = NSRunningApplication(processIdentifier: pid)?.localizedName {
+                    print("📱 Focused application: \(appName)")
+                }
+            }
+            
+            // Verify it's a text element
+            var role: CFTypeRef?
+            let roleResult = AXUIElementCopyAttributeValue(axElement, kAXRoleAttribute as CFString, &role)
+            print("🎯 Element role result: \(roleResult)")
+            
+            if roleResult == .success,
+               let roleString = role as? String {
+                print("📝 Element role: \(roleString)")
+                
+                // Include more text input roles and debug info
+                let textInputRoles = [
+                    "AXTextField",
+                    "AXTextArea",
+                    "AXComboBox",
+                    "AXSearchField",
+                    "AXStaticText",
+                    "AXTextGroup",
+                    "AXWebArea",      // For web-based text inputs
+                    "AXDocument",     // For document editors
+                    "AXEditor"        // For code editors
+                ]
+                
+                if textInputRoles.contains(roleString) {
+                    print("✅ Found valid text element")
+                    return axElement
+                } else {
+                    print("❌ Element role '\(roleString)' not in allowed types")
+                    // Try to get parent element's role for debugging
+                    var parent: CFTypeRef?
+                    if AXUIElementCopyAttributeValue(axElement, kAXParentAttribute as CFString, &parent) == .success,
+                       let parentElement = parent {
+                        let parentAXElement = unsafeBitCast(parentElement, to: AXUIElement.self)
+                        var parentRole: CFTypeRef?
+                        if AXUIElementCopyAttributeValue(parentAXElement, kAXRoleAttribute as CFString, &parentRole) == .success,
+                           let parentRoleString = parentRole as? String {
+                            print("👆 Parent element role: \(parentRoleString)")
+                        }
+                    }
+                }
+            } else {
+                print("❌ Could not get role for element")
+            }
+            
+        case _ where result.rawValue == -25211:
+            print("⚠️ Application is not trusted for Accessibility access")
+        case _ where result.rawValue == -25204:
+            print("⚠️ No element has keyboard focus")
+        default:
+            print("⚠️ Unexpected error: \(result)")
+        }
+        
+        return nil
+    }
+    
+    private func pasteTextUsingPasteboard(_ text: String) {
+        print("📋 Attempting to paste text: '\(text)'")
+        
+        // Store original clipboard content
+        let pasteboard = NSPasteboard.general
+        let originalContent = pasteboard.string(forType: .string)
+        print("💾 Saved original clipboard content")
+        
+        // Set new content with retry
+        var pasteboardSetSuccess = false
+        for _ in 1...3 {
+            pasteboard.clearContents()
+            pasteboardSetSuccess = pasteboard.setString(text, forType: .string)
+            if pasteboardSetSuccess {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        
+        guard pasteboardSetSuccess else {
+            print("❌ Failed to set pasteboard content")
+            return
+        }
+        print("✏️ Set new clipboard content")
+        
+        // Create event source with explicit permissions
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            print("❌ Failed to create event source")
+            return
+        }
+        source.localEventsSuppressionInterval = 0.0
+        
+        // Ensure we have proper key codes
+        let vKey: CGKeyCode = 0x09  // 'V' key
+        let cmdKey: CGEventFlags = .maskCommand
+        
+        // Create key events
+        guard let cmdDown = CGEvent(source: nil),
+              let vKeyDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true),
+              let vKeyUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false),
+              let cmdUp = CGEvent(source: nil) else {
+            print("❌ Failed to create keyboard events")
+            return
+        }
+        
+        // Set command flag
+        cmdDown.flags = cmdKey
+        vKeyDown.flags = cmdKey
+        vKeyUp.flags = cmdKey
+        cmdUp.flags = []
+        
+        print("⌨️ Simulating Cmd+V paste")
+        
+        // Post events with small delays
+        cmdDown.post(tap: CGEventTapLocation.cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.05)
+        vKeyDown.post(tap: CGEventTapLocation.cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.05)
+        vKeyUp.post(tap: CGEventTapLocation.cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.05)
+        cmdUp.post(tap: CGEventTapLocation.cghidEventTap)
+        
+        // Restore original clipboard content after a longer delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let originalContent = originalContent {
+                pasteboard.clearContents()
+                pasteboard.setString(originalContent, forType: .string)
+                print("♻️ Restored original clipboard content")
+            }
         }
     }
     
     private func toggleClipboardWindow() {
-        if let controller = clipboardWindowController {
-            if controller.window?.isVisible == true {
-                controller.close()
-            } else {
-                controller.window?.makeKeyAndOrderFront(nil)
-                NSApplication.shared.activate(ignoringOtherApps: true)
-            }
-        } else {
-            let controller = NSWindowController(window: NSWindow(
+        if clipboardWindowController == nil {
+            let clipboardWindow = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 400, height: 500),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
-            ))
-            controller.window?.title = "Clipboard History"
-            controller.window?.contentView = NSHostingView(rootView: ClipboardHistoryView())
-            controller.window?.center()
-            controller.showWindow(nil)
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            clipboardWindowController = controller
+            )
+            clipboardWindow.title = "Clipboard History"
+            clipboardWindow.center()
+            
+            let hostingView = NSHostingView(rootView: ClipboardHistoryView())
+            clipboardWindow.contentView = hostingView
+            
+            clipboardWindowController = NSWindowController(window: clipboardWindow)
         }
-    }
-    
-    private func pasteText(_ text: String) {
-        // First, copy the text to the clipboard
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
         
-        // Then simulate ⌘V to paste
-        let source = CGEventSource(stateID: .hidSystemState)
-        
-        // Key down for Command
-        let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: true)
-        cmdDown?.flags = .maskCommand
-        cmdDown?.post(tap: .cghidEventTap)
-        
-        // Key down for V
-        let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
-        vDown?.flags = .maskCommand
-        vDown?.post(tap: .cghidEventTap)
-        
-        // Key up for V
-        let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-        vUp?.flags = .maskCommand
-        vUp?.post(tap: .cghidEventTap)
-        
-        // Key up for Command
-        let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: 0x37, keyDown: false)
-        cmdUp?.post(tap: .cghidEventTap)
+        if clipboardWindowController?.window?.isVisible == true {
+            clipboardWindowController?.close()
+        } else {
+            clipboardWindowController?.showWindow(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 } 

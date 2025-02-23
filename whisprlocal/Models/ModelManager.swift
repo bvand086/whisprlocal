@@ -1,6 +1,32 @@
 import Foundation
 import CoreML
 
+enum ModelError: LocalizedError {
+    case downloadFailed
+    case unzipFailed
+    case mlmodelcNotFound
+    case invalidModelPath
+    case coreMLLoadFailed
+    case cannotDeleteActiveModel
+    
+    var errorDescription: String? {
+        switch self {
+        case .downloadFailed:
+            return "Failed to download the model file"
+        case .unzipFailed:
+            return "Failed to unzip the model file"
+        case .mlmodelcNotFound:
+            return "Could not find .mlmodelc in the unzipped contents"
+        case .invalidModelPath:
+            return "The Core ML model path is invalid"
+        case .coreMLLoadFailed:
+            return "Failed to load the Core ML model"
+        case .cannotDeleteActiveModel:
+            return "Cannot delete the currently active model"
+        }
+    }
+}
+
 class ModelManager: NSObject, ObservableObject {
     static let shared = ModelManager()
     
@@ -81,11 +107,11 @@ class ModelManager: NSObject, ObservableObject {
             try await downloadGGMLModel(from: urlString, filename: filename)
             print("Successfully downloaded GGML model: \(filename)")
             
-            // Download and compile Core ML model if it's an English model
+            // Download and process Core ML model if it's an English model
             if filename.contains(".en") {
                 print("English model detected, downloading Core ML model...")
-                try await downloadAndCompileCoreMLModel()
-                print("Successfully downloaded and compiled Core ML model")
+                try await downloadAndProcessCoreMLModel(for: filename)
+                print("Successfully downloaded and processed Core ML model")
             }
             
             await MainActor.run {
@@ -132,14 +158,9 @@ class ModelManager: NSObject, ObservableObject {
         
         let (downloadURL, response) = try await URLSession.shared.download(from: url)
         
-        guard let httpResponse = response as? HTTPURLResponse else {
-            print("Invalid response type")
-            throw ModelError.downloadFailed
-        }
-        
-        print("Download response status code: \(httpResponse.statusCode)")
-        guard httpResponse.statusCode == 200 else {
-            print("Download failed with status code: \(httpResponse.statusCode)")
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            print("Download failed with status: \(String(describing: (response as? HTTPURLResponse)?.statusCode))")
             throw ModelError.downloadFailed
         }
         
@@ -152,96 +173,142 @@ class ModelManager: NSObject, ObservableObject {
         }
     }
     
-    private func downloadAndCompileCoreMLModel() async throws {
+    private func downloadAndProcessCoreMLModel(for filename: String) async throws {
         let session = URLSession(configuration: .default)
         
-        // Use the correct URL for the compiled model
-        let urlString = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-encoder.mlmodelc.zip"
+        // Extract model size from filename (e.g., "small", "base", "medium", "large")
+        let modelSize = extractModelSize(from: filename)
+        
+        // Use the correct URL for the Core ML model based on size
+        let urlString = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-\(modelSize).en-encoder.mlmodelc.zip"
         guard let url = URL(string: urlString) else {
             print("Invalid Core ML model URL")
             throw URLError(.badURL)
         }
         
-        let destinationURL = modelsFolderURL.appendingPathComponent("ggml-base.en-encoder.mlmodelc")
-        print("Downloading Core ML model to: \(destinationURL)")
+        let mlmodelcName = "ggml-\(modelSize).en-encoder.mlmodelc"
+        let finalDestinationURL = modelsFolderURL.appendingPathComponent(mlmodelcName)
         
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-            print("Removed existing Core ML model")
-        }
-        
-        // Create a temporary directory for the zip file
+        // Create a unique temporary directory for processing
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        let zipURL = tempDir.appendingPathComponent("model.zip")
         
-        // Download the zip file
-        let (downloadURL, response) = try await session.download(from: url)
+        defer {
+            // Clean up temporary directory
+            try? FileManager.default.removeItem(at: tempDir)
+        }
+        
+        // Download and handle redirects
+        let zipURL = try await downloadWithRedirects(from: url, to: tempDir.appendingPathComponent("model.zip"))
+        
+        // Unzip and locate the .mlmodelc
+        let mlmodelcURL = try await unzipAndLocateMLModelC(from: zipURL, in: tempDir)
+        
+        // Remove existing model if present
+        if FileManager.default.fileExists(atPath: finalDestinationURL.path) {
+            try FileManager.default.removeItem(at: finalDestinationURL)
+            print("Removed existing Core ML model at: \(finalDestinationURL.path)")
+        }
+        
+        // Move the .mlmodelc to its final location
+        try FileManager.default.moveItem(at: mlmodelcURL, to: finalDestinationURL)
+        print("Successfully moved Core ML model to: \(finalDestinationURL.path)")
+        
+        // Validate the final .mlmodelc
+        try validateMLModelC(at: finalDestinationURL)
+    }
+    
+    private func downloadWithRedirects(from url: URL, to destinationURL: URL) async throws -> URL {
+        let (downloadURL, response) = try await URLSession.shared.download(from: url)
         
         guard let httpResponse = response as? HTTPURLResponse else {
-            print("Invalid response type for Core ML model download")
             throw ModelError.downloadFailed
         }
         
-        print("Core ML download response status code: \(httpResponse.statusCode)")
-        print("Core ML download response headers: \(httpResponse.allHeaderFields)")
-        
-        if httpResponse.statusCode == 302 || httpResponse.statusCode == 301,
-           let redirectURL = httpResponse.allHeaderFields["Location"] as? String,
-           let newURL = URL(string: redirectURL) {
-            print("Following redirect to: \(redirectURL)")
-            let (redirectDownloadURL, redirectResponse) = try await session.download(from: newURL)
+        switch httpResponse.statusCode {
+        case 200:
+            try FileManager.default.moveItem(at: downloadURL, to: destinationURL)
+            return destinationURL
             
-            guard let redirectHttpResponse = redirectResponse as? HTTPURLResponse,
-                  redirectHttpResponse.statusCode == 200 else {
-                print("Redirect download failed with status: \(String(describing: (redirectResponse as? HTTPURLResponse)?.statusCode))")
+        case 301, 302:
+            guard let redirectURL = httpResponse.allHeaderFields["Location"] as? String,
+                  let newURL = URL(string: redirectURL) else {
                 throw ModelError.downloadFailed
             }
+            print("Following redirect to: \(redirectURL)")
+            return try await downloadWithRedirects(from: newURL, to: destinationURL)
             
-            try FileManager.default.moveItem(at: redirectDownloadURL, to: zipURL)
-        } else if httpResponse.statusCode == 200 {
-            try FileManager.default.moveItem(at: downloadURL, to: zipURL)
-        } else {
+        default:
             print("Unexpected status code: \(httpResponse.statusCode)")
             throw ModelError.downloadFailed
         }
-        
-        // Unzip the model
-        print("Unzipping Core ML model...")
-        try await unzipCoreMLModel(from: zipURL, to: destinationURL)
-        
-        // Clean up
-        try? FileManager.default.removeItem(at: tempDir)
-        
-        // Verify the model exists
-        guard FileManager.default.fileExists(atPath: destinationURL.path) else {
-            print("Error: Core ML model not found at destination")
-            throw ModelError.downloadFailed
-        }
-        
-        print("Successfully downloaded and extracted Core ML model")
     }
     
-    private func unzipCoreMLModel(from zipURL: URL, to destinationURL: URL) async throws {
-        // Run unzip command
+    private func unzipAndLocateMLModelC(from zipURL: URL, in tempDir: URL) async throws -> URL {
+        let extractionDir = tempDir.appendingPathComponent("extracted")
+        try FileManager.default.createDirectory(at: extractionDir, withIntermediateDirectories: true)
+        
+        // Use Process to unzip
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-o", zipURL.path, "-d", destinationURL.deletingLastPathComponent().path]
+        process.arguments = ["-o", "-q", zipURL.path, "-d", extractionDir.path]
         
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
         
-        print("Running unzip command: unzip -o \(zipURL.path) -d \(destinationURL.deletingLastPathComponent().path)")
-        
+        print("Unzipping Core ML model...")
         try process.run()
         process.waitUntilExit()
         
-        if process.terminationStatus != 0 {
-            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            let data = try pipe.fileHandleForReading.readToEnd() ?? Data()
+            let output = String(data: data, encoding: .utf8) ?? ""
             print("Unzip failed with output: \(output)")
-            throw ModelError.downloadFailed
+            throw ModelError.unzipFailed
         }
+        
+        // Recursively search for .mlmodelc
+        guard let mlmodelcURL = try findMLModelC(in: extractionDir) else {
+            throw ModelError.mlmodelcNotFound
+        }
+        
+        return mlmodelcURL
+    }
+    
+    private func findMLModelC(in directory: URL) throws -> URL? {
+        let fileManager = FileManager.default
+        let contents = try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        
+        // First, look for .mlmodelc directly in this directory
+        if let mlmodelc = contents.first(where: { $0.lastPathComponent.hasSuffix(".mlmodelc") }) {
+            return mlmodelc
+        }
+        
+        // Then recursively search subdirectories
+        for url in contents where (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            if let found = try findMLModelC(in: url) {
+                return found
+            }
+        }
+        
+        return nil
+    }
+    
+    private func validateMLModelC(at url: URL) throws {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw ModelError.invalidModelPath
+        }
+        
+        // Additional validation could be added here, such as checking for required files
+        // within the .mlmodelc directory or attempting to load the model
+    }
+    
+    private func extractModelSize(from filename: String) -> String {
+        let sizes = ["tiny", "base", "small", "medium", "large"]
+        return sizes.first { filename.contains($0) } ?? "base"
     }
     
     func deleteModel(_ modelURL: URL) async throws {
@@ -259,23 +326,6 @@ class ModelManager: NSObject, ObservableObject {
         } catch {
             print("Error deleting model: \(error)")
             throw error
-        }
-    }
-    
-    enum ModelError: LocalizedError {
-        case downloadFailed
-        case coreMLCompilationFailed
-        case cannotDeleteActiveModel
-        
-        var errorDescription: String? {
-            switch self {
-            case .downloadFailed:
-                return "Failed to download the model file"
-            case .coreMLCompilationFailed:
-                return "Failed to compile the Core ML model"
-            case .cannotDeleteActiveModel:
-                return "Cannot delete the currently active model"
-            }
         }
     }
     

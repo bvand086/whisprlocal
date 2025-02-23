@@ -1,6 +1,7 @@
 import Foundation
 import SwiftWhisper
 import AVFoundation
+import AppKit
 
 // Define WhisperLanguage enum
 public enum WhisperLanguage: String, CaseIterable, Identifiable {
@@ -249,41 +250,31 @@ class TranscriptionManager: ObservableObject {
             print("    RMS: \(normalizedStats.rms)")
 
             print("🔄 Starting transcription...")
-            // Process the entire audio buffer at once for better context
-            let segments: [Segment] = try await whisper.transcribe(audioFrames: normalizedBuffer)
+            let segments = try await whisper.transcribe(audioFrames: audioBuffer)
             
-            print("✅ Transcription complete - Received \(segments.count) segments")
+            // Process segments and build final transcription
+            let transcriptionText = segments.map { $0.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines) }
+                .joined(separator: " ")
+                .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
             
-            var transcriptionText = ""
-            var hasValidContent = false
-
-            // Process the transcription segments
-            for (index, segment) in segments.enumerated() {
-                let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                print("  🗣️ Segment[\(index)]: '\(text)'")
-                
-                // Skip empty or noise segments
-                guard !text.isEmpty && text != "[BLANK_AUDIO]" else {
-                    print("  ⏭️ Skipping empty or blank segment")
-                    continue
-                }
-
-                hasValidContent = true
-                if !transcriptionText.isEmpty {
-                    transcriptionText.append(" ")
-                }
-                transcriptionText.append(text)
-            }
-
-            // Only add to history and update if we have valid content
+            let hasValidContent = !transcriptionText.isEmpty
+            
             if hasValidContent {
                 print("📝 Final transcription: '\(transcriptionText)'")
                 addTranscriptionEntry(transcriptionText)
                 transcribedText = transcriptionText
                 
-                // Call the real-time update handler
                 await MainActor.run {
+                    // Update the clipboard with the transcribed text
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(transcriptionText, forType: .string)
+                    
+                    // Notify any real-time update handlers
                     onTranscriptionUpdate?(transcriptionText)
+                    
+                    // Simulate a paste command to insert the transcribed text
+                    Paster.pasteText()
                 }
             } else {
                 print("ℹ️ No valid speech content detected in any segments")
