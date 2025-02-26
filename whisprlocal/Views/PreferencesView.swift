@@ -229,10 +229,11 @@ struct ModelPreferencesView: View {
                 .cornerRadius(8)
             }
             
-            if transcriptionManager.isDownloading {
-                ProgressView(value: transcriptionManager.downloadProgress) {
+            if modelManager.isDownloadingModel {
+                ProgressView(value: modelManager.downloadProgress) {
                     Text("Downloading model...")
                 }
+                .padding(.vertical, 4)
             }
             
             // Available Models List
@@ -463,7 +464,7 @@ struct ModelPreferencesView: View {
     private func downloadModel(url: URL, filename: String) {
         Task { @MainActor in
             do {
-                try await transcriptionManager.downloadModel(url: url, filename: filename)
+                try await modelManager.downloadModel(from: url.absoluteString, filename: filename)
             } catch {
                 print("Failed to download model: \(error)")
                 showError = true

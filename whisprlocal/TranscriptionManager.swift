@@ -115,29 +115,53 @@ class TranscriptionManager: ObservableObject {
             throw TranscriptionError.modelNotFound(type: "GGML")
         }
         
+        // Get the correct CoreML model name and path
+        let coreMLModelName = ModelManager.getCoreMLModelName(for: modelName)
+        let coreMLModelURL = modelsFolderURL.appendingPathComponent(coreMLModelName)
+        
+        if FileManager.default.fileExists(atPath: coreMLModelURL.path) {
+            print("✅ Found CoreML model: \(coreMLModelName)")
+            setenv("WHISPER_COREML_MODEL_PATH", coreMLModelURL.path, 1)
+        } else {
+            print("⚠️ CoreML model not found, will use CPU-only mode")
+            unsetenv("WHISPER_COREML_MODEL_PATH")
+        }
+        
         // Save the model name for future reloads (e.g. when changing language)
         currentModelName = modelName
         
         print("🚀 Initializing Whisper with model: \(modelName)")
         
-        // Initialize model in an autorelease pool
-        let whisperInstance = autoreleasepool { () -> Whisper? in
-            return Whisper(fromFileURL: ggmlModelURL)
+        // Initialize model in an autorelease pool with proper error handling
+        let whisperInstance = try await Task.detached(priority: .userInitiated) { () -> Whisper? in
+            do {
+                return try autoreleasepool { () throws -> Whisper? in
+                    let instance = try Whisper(fromFileURL: ggmlModelURL)
+                    if instance == nil {
+                        throw TranscriptionError.modelInitializationFailed
+                    }
+                    return instance
+                }
+            } catch {
+                print("❌ Failed to initialize Whisper: \(error)")
+                throw error
+            }
+        }.value
+        
+        guard let whisperInstance = whisperInstance else {
+            print("❌ Whisper initialization returned nil")
+            throw TranscriptionError.modelInitializationFailed
         }
         
         // Add a small delay to allow memory to stabilize
         try await Task.sleep(nanoseconds: 100_000_000) // 100ms delay
-        
-        guard let whisperInstance = whisperInstance else {
-            throw TranscriptionError.modelInitializationFailed
-        }
         
         self.whisper = whisperInstance
         
         await MainActor.run {
             isModelLoaded = true
             currentError = nil
-            print("✅ Model loaded successfully")
+            print("✅ Model loaded successfully" + (FileManager.default.fileExists(atPath: coreMLModelURL.path) ? " with CoreML support" : " in CPU-only mode"))
         }
     }
     

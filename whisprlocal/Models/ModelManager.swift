@@ -97,7 +97,7 @@ class ModelManager: NSObject, ObservableObject {
         print("Starting download of model: \(filename) from \(urlString)")
         
         // Pre-check if model size will cause memory pressure
-        let modelSize = extractModelSize(from: filename)
+        let modelSize = ModelManager.extractModelSize(from: filename)
         let isLargeModel = modelSize.contains("large")
         
         if isLargeModel {
@@ -213,49 +213,42 @@ class ModelManager: NSObject, ObservableObject {
     private func downloadAndProcessCoreMLModel(for filename: String) async throws {
         let session = URLSession(configuration: .default)
         
-        // Extract model size from filename (e.g., "tiny", "base", "small", "medium", "large")
-        let modelSize = extractModelSize(from: filename)
+        // Get the correct CoreML model name
+        let coreMLModelName = ModelManager.getCoreMLModelName(for: filename)
+        let coreMLZipName = "\(coreMLModelName).zip"
         
-        // Use the correct URL for the Core ML model based on size
-        // For multilingual models, we still use the English encoder as it works for all languages
-        let urlString = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-\(modelSize).en-encoder.mlmodelc.zip"
+        print("🔍 CoreML model details:")
+        print("  Base filename: \(filename)")
+        print("  CoreML model name: \(coreMLModelName)")
+        print("  CoreML zip name: \(coreMLZipName)")
+        
+        // Use the correct HuggingFace URL pattern
+        let urlString = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(coreMLZipName)"
+        print("📥 Attempting to download CoreML model from: \(urlString)")
+        
         guard let url = URL(string: urlString) else {
-            print("Invalid Core ML model URL")
+            print("❌ Invalid Core ML model URL")
             throw URLError(.badURL)
         }
         
-        // Always use the English encoder mlmodelc since it works for all languages
-        let mlmodelcName = "ggml-\(modelSize).en-encoder.mlmodelc"
-        let finalDestinationURL = modelsFolderURL.appendingPathComponent(mlmodelcName)
+        let finalDestinationURL = modelsFolderURL.appendingPathComponent(coreMLModelName)
+        print("📁 Final destination will be: \(finalDestinationURL.path)")
         
         // Create a unique temporary directory for processing
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        print("📂 Created temporary directory at: \(tempDir.path)")
         
         defer {
-            // Clean up temporary directory
             try? FileManager.default.removeItem(at: tempDir)
-            
-            // Force cleanup memory after large model processing
-            autoreleasepool {
-                print("Performing memory cleanup after model processing")
-                // Empty autorelease pool to help with memory cleanup
-            }
-        }
-        
-        // Add additional memory cleanup before starting the download
-        autoreleasepool {
-            // Empty autorelease pool to help with memory cleanup before downloading
+            print("🧹 Cleaned up temporary directory")
+            autoreleasepool { }
         }
         
         // Download and handle redirects
+        print("🔄 Starting CoreML model download...")
         let zipURL = try await downloadWithRedirects(from: url, to: tempDir.appendingPathComponent("model.zip"))
-        
-        // Force cleanup after download completes and before unzipping
-        autoreleasepool {
-            print("Performing memory cleanup after download before unzipping")
-            // Empty autorelease pool to help with memory cleanup
-        }
+        print("✅ CoreML model download completed to: \(zipURL.path)")
         
         // Unzip and locate the .mlmodelc
         let mlmodelcURL = try await unzipAndLocateMLModelC(from: zipURL, in: tempDir)
@@ -263,15 +256,15 @@ class ModelManager: NSObject, ObservableObject {
         // Remove existing model if present
         if FileManager.default.fileExists(atPath: finalDestinationURL.path) {
             try FileManager.default.removeItem(at: finalDestinationURL)
-            print("Removed existing Core ML model at: \(finalDestinationURL.path)")
+            print("🗑️ Removed existing Core ML model at: \(finalDestinationURL.path)")
         }
         
         // Move the .mlmodelc to its final location
         try FileManager.default.moveItem(at: mlmodelcURL, to: finalDestinationURL)
-        print("Successfully moved Core ML model to: \(finalDestinationURL.path)")
+        print("✅ Successfully moved Core ML model to: \(finalDestinationURL.path)")
         
-        // Validate the final .mlmodelc
-        try validateMLModelC(at: finalDestinationURL)
+        try await validateMLModelC(at: finalDestinationURL)
+        print("✅ CoreML model successfully downloaded and validated")
     }
     
     private func downloadWithRedirects(from url: URL, to destinationURL: URL) async throws -> URL {
@@ -332,13 +325,19 @@ class ModelManager: NSObject, ObservableObject {
         try FileManager.default.createDirectory(at: extractionDir, withIntermediateDirectories: true)
         
         print("Unzipping Core ML model...")
+        print("Zip file location: \(zipURL.path)")
+        print("Extraction directory: \(extractionDir.path)")
         
-        // For large models, we'll use a more memory-efficient approach
-        // by directly extracting to disk without loading entire contents in memory
-        // Use Process to unzip
+        // Verify zip file exists
+        guard FileManager.default.fileExists(atPath: zipURL.path) else {
+            print("❌ Zip file not found at: \(zipURL.path)")
+            throw ModelError.unzipFailed
+        }
+        
+        // Use the correct unzip command with proper flags
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-o", "-q", zipURL.path, "-d", extractionDir.path]
+        process.arguments = ["-o", zipURL.path, "-d", extractionDir.path] // Removed -v for cleaner output
         
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -349,49 +348,49 @@ class ModelManager: NSObject, ObservableObject {
             process.qualityOfService = .utility
         }
         
+        print("🔄 Starting unzip process...")
         try process.run()
         process.waitUntilExit()
+        
+        // Get the process output
+        let data = try pipe.fileHandleForReading.readToEnd() ?? Data()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        print("📝 Unzip process output:\n\(output)")
+        
+        guard process.terminationStatus == 0 else {
+            print("❌ Unzip failed with status: \(process.terminationStatus)")
+            print("Error output: \(output)")
+            throw ModelError.unzipFailed
+        }
+        
+        print("✅ Unzip completed successfully")
+        
+        // List contents of extraction directory
+        do {
+            let contents = try FileManager.default.contentsOfDirectory(at: extractionDir, includingPropertiesForKeys: nil)
+            print("📂 Extracted contents:")
+            contents.forEach { print("  - \($0.path)") }
+            
+            // Look for the .mlmodelc directory directly
+            if let mlmodelcURL = contents.first(where: { $0.lastPathComponent.hasSuffix(".mlmodelc") }) {
+                print("✅ Found .mlmodelc at: \(mlmodelcURL.path)")
+                return mlmodelcURL
+            }
+        } catch {
+            print("⚠️ Failed to list extracted contents: \(error)")
+        }
         
         // Try to remove the zip file as soon as possible to free memory
         try? FileManager.default.removeItem(at: zipURL)
         
-        guard process.terminationStatus == 0 else {
-            let data = try pipe.fileHandleForReading.readToEnd() ?? Data()
-            let output = String(data: data, encoding: .utf8) ?? ""
-            print("Unzip failed with output: \(output)")
-            throw ModelError.unzipFailed
-        }
-        
         // Run an immediate memory cleanup after unzipping
         autoreleasepool {
-            print("Performing memory cleanup after unzipping")
+            print("♻️ Performing memory cleanup after unzipping")
         }
         
-        // Recursively search for .mlmodelc
-        guard let mlmodelcURL = try findMLModelC(in: extractionDir) else {
-            throw ModelError.mlmodelcNotFound
-        }
-        
-        return mlmodelcURL
-    }
-    
-    private func findMLModelC(in directory: URL) throws -> URL? {
-        let fileManager = FileManager.default
-        let contents = try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        
-        // First, look for .mlmodelc directly in this directory
-        if let mlmodelc = contents.first(where: { $0.lastPathComponent.hasSuffix(".mlmodelc") }) {
-            return mlmodelc
-        }
-        
-        // Then recursively search subdirectories
-        for url in contents where (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-            if let found = try findMLModelC(in: url) {
-                return found
-            }
-        }
-        
-        return nil
+        // If we haven't found the .mlmodelc directory by now, throw an error
+        print("❌ No .mlmodelc found in extracted contents")
+        throw ModelError.mlmodelcNotFound
     }
     
     private func validateMLModelC(at url: URL) throws {
@@ -428,7 +427,7 @@ class ModelManager: NSObject, ObservableObject {
         // Validation is done through file structure checks only
     }
     
-    private func extractModelSize(from filename: String) -> String {
+    static func extractModelSize(from filename: String) -> String {
         // Handle different model naming variations including large model versions
         if filename.contains("large-v3") || filename.contains("large-v3-turbo") {
             return "large-v3"
@@ -450,6 +449,13 @@ class ModelManager: NSObject, ObservableObject {
         return "base"
     }
     
+    static func getCoreMLModelName(for filename: String) -> String {
+        let modelSize = extractModelSize(from: filename)
+        let isEnglishOnly = filename.contains(".en.")
+        let languageSuffix = isEnglishOnly ? ".en" : ""
+        return "ggml-\(modelSize)\(languageSuffix)-encoder.mlmodelc"
+    }
+    
     func deleteModel(_ modelURL: URL) async throws {
         // Don't allow deletion of currently loaded model
         guard modelURL != currentModel else {
@@ -462,6 +468,8 @@ class ModelManager: NSObject, ObservableObject {
                 // Update the downloadedModels array
                 downloadedModels.removeAll { $0 == modelURL }
             }
+            // Refresh the list of downloaded models
+            loadDownloadedModels()
         } catch {
             print("Error deleting model: \(error)")
             throw error
