@@ -333,6 +333,11 @@ struct WhisprlocalApp: App {
                 .environmentObject(transcriptionManager)
         }
     }
+    
+    // Add this to your init() or early in app startup
+    init() {
+        Whisper.ensurePromptHookSetup()
+    }
 }
 
 // TranscriptionEntryView has been moved to a separate file to avoid redeclaration

@@ -96,6 +96,9 @@ class TranscriptionManager: ObservableObject {
     private let audioLevelUpdateInterval: TimeInterval = 1/30 // 30fps
     private var audioLevelTimer: Timer?
     
+    // Add a prompt property to the class properties section
+    @Published var promptText: String = ""
+    
     private init() {}
     
     func setLanguage(_ language: WhisperLanguage) async throws {
@@ -292,6 +295,16 @@ class TranscriptionManager: ObservableObject {
             print("    RMS: \(normalizedStats.rms)")
 
             print("🔄 Starting transcription...")
+            
+            // Set prompt if available
+            if !promptText.isEmpty {
+                print("🔤 Using prompt: \"\(promptText)\"")
+                // Use environment variable to pass prompt to whisper.cpp
+                setenv("WHISPER_PROMPT", promptText, 1)
+            } else {
+                unsetenv("WHISPER_PROMPT")
+            }
+            
             let segments = try await whisper.transcribe(audioFrames: audioBuffer)
             
             // Process segments and build final transcription

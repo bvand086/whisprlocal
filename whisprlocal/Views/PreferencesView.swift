@@ -42,6 +42,9 @@ struct ModelPreferencesView: View {
     @State private var modelToDelete: URL? = nil
     @State private var expandedSections: Set<String> = ["Downloaded"] // Downloaded section is expanded by default
     
+    @State private var prompt: String = ""
+    @State private var showPromptInfo: Bool = false
+    
     // Memory thresholds
     private let largeModelThreshold: Double = 1000 // MB
     
@@ -363,6 +366,56 @@ struct ModelPreferencesView: View {
                 Text(error.localizedDescription)
                     .foregroundColor(.red)
                     .font(.caption)
+            }
+            
+            // Transcription Settings
+            Section(header: Text("Transcription Settings")) {
+                VStack(alignment: .leading) {
+                    HStack {
+                        Text("Initial Prompt")
+                            .font(.headline)
+                        
+                        Button {
+                            showPromptInfo = true
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .foregroundColor(.blue)
+                        }
+                        .help("Learn about setting a prompt")
+                        .sheet(isPresented: $showPromptInfo) {
+                            VStack(spacing: 16) {
+                                Text("About Prompts")
+                                    .font(.title)
+                                
+                                Text("Prompts help guide the transcription model. They can improve accuracy when you expect certain words, phrases, or contexts in the audio. For example, you might use 'Medical terminology:' as a prompt when transcribing medical content.")
+                                    .multilineTextAlignment(.center)
+                                    .padding()
+                                
+                                Button("Close") {
+                                    showPromptInfo.toggle()
+                                }
+                                .padding()
+                            }
+                            .frame(width: 400, height: 250)
+                            .padding()
+                        }
+                    }
+                    
+                    TextField("Enter an initial prompt (optional)", text: $prompt)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .onChange(of: prompt) { newValue in
+                            transcriptionManager.promptText = newValue
+                        }
+                        .onAppear {
+                            // Initialize with current value
+                            prompt = transcriptionManager.promptText
+                        }
+                    
+                    Text("Examples: 'Medical terms:', 'Programming jargon:', or 'Names: John, Sarah, Michael'")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 4)
             }
         }
         .padding()
